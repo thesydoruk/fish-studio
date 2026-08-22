@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fish-speech-server"
+version = "0.5.0"
+description = "Fish Speech TTS server, dataset builder, and LoRA fine-tuning"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "fish-server contributors" }]
+dependencies = [
+    "fish-speech @ git+https://github.com/fishaudio/fish-speech.git@v2.0.0-beta",
+    "protobuf>=4.25.3,<6",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "python-multipart>=0.0.9",
+    "soundfile>=0.12",
+    "PyYAML>=6.0",
+    "python-dotenv>=1.0",
+    "httpx>=0.27",
+    # Stress marks are applied to training transcripts and to synthesis input alike,
+    # so both the server and the dataset tooling need this.
+    "ukrainian-word-stress>=2.1",
+]
+
+[project.optional-dependencies]
+dataset = [
+    "httpx>=0.27",
+    "yt-dlp>=2024.1",
+    "pydub>=0.25",
+    "click>=8.1",
+    "rich>=13.0",
+    "tqdm>=4.66",
+    "datasets>=2.19",
+    # Context-aware heteronym resolution for STRESS_DISAMBIGUATION=stanza
+    "stanza>=1.8",
+]
+training = [
+    "transformers>=4.57.0,<5.0",
+    # 2.21 dropped the pkg_resources import that setuptools 81 removed.
+    "tensorboard>=2.21",
+    "tokenizers>=0.19.0,<0.20.0",
+    "pandas>=1.4,<2.1",
+    "torch",
+    "torchaudio",
+]
+dev = ["pytest>=8.0", "ruff>=0.4", "pre-commit>=3.7"]
+
+[project.scripts]
+fish-server = "fish_studio.server.serve:main"
+fish-dataset = "fish_studio.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
