@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+.venv-vllm/
+venv/
+.env
+
+# Project config and runtime data
+data/
+work/
+
+# Docker Compose / Buildx local layer cache
+.docker-cache/
+
+# IDE
+.cursor/
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local scratch
+tmp/
+probe-listen/
+

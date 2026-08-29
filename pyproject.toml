@@ -1,0 +1,88 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fish-speech-server"
+version = "0.5.0"
+description = "Fish Speech TTS server, dataset builder, and LoRA fine-tuning"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Valerii Sydoruk" }]
+maintainers = [{ name = "Valerii Sydoruk" }]
+keywords = ["tts", "fish-speech", "voice-cloning", "ukrainian", "lora"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+dependencies = [
+    "fish-speech @ git+https://github.com/fishaudio/fish-speech.git@v2.0.0-beta",
+    # Do not pin protobuf here. descript-audiotools 0.7.2 (via fish-speech)
+    # requires protobuf<3.20; generated fish-speech protos need 4.x. Pip cannot
+    # satisfy both. scripts/install.sh / [tool.uv] override protobuf after the graph
+    # resolves. See force_protobuf_for_fish_speech in scripts/install.sh.
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "python-multipart>=0.0.9",
+    "soundfile>=0.12",
+    "PyYAML>=6.0",
+    "python-dotenv>=1.0",
+    "httpx>=0.27",
+    # Stress marks are applied to training transcripts and to synthesis input alike,
+    # so both the server and the dataset tooling need this.
+    "ukrainian-word-stress>=2.1",
+    "praat-parselmouth>=0.4.3",
+]
+
+[project.optional-dependencies]
+dataset = [
+    "httpx>=0.27",
+    "yt-dlp>=2024.1",
+    "pydub>=0.25",
+    "click>=8.1",
+    "rich>=13.0",
+    "tqdm>=4.66",
+    # Context-aware heteronym resolution for STRESS_DISAMBIGUATION=stanza
+    "stanza>=1.8",
+]
+training = [
+    # Stay inside fish-speech v2.0.0-beta's transformers<=4.57.3 pin.
+    "transformers>=4.57.0,<=4.57.3",
+    # 2.21 needs protobuf>=6.31, which pip cannot install next to
+    # descript-audiotools (protobuf<3.20). 2.20 accepts protobuf 3.19 and 4.x.
+    "tensorboard>=2.20,<2.21",
+]
+dev = ["pytest>=8.0", "ruff>=0.4", "pre-commit>=3.7"]
+
+# Same override fish-speech uses on main. uv applies it during resolve;
+# pip cannot, so scripts/install.sh still force-installs protobuf after pip install.
+[tool.uv]
+override-dependencies = [
+    "protobuf>=4.25.3,<6",
+]
+
+[project.urls]
+Homepage = "https://github.com/thesydoruk/fish-studio"
+Repository = "https://github.com/thesydoruk/fish-studio"
+Issues = "https://github.com/thesydoruk/fish-studio/issues"
+
+[project.scripts]
+fish-server = "fish_studio.server.serve:main"
+fish-dataset = "fish_studio.cli:main"
+
+[tool.setuptools]
+license-files = [
+    "LICENSE",
+    "licenses/NOTICE",
+    "licenses/FISH-AUDIO-RESEARCH-LICENSE.txt",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

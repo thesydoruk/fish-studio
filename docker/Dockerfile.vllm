@@ -1,0 +1,58 @@
+# syntax=docker/dockerfile:1
+
+FROM nvidia/cuda:13.0.0-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update \
+    && apt-get install -y --no-install-recommends \
+        software-properties-common curl git \
+        portaudio19-dev build-essential \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        python3.12 python3.12-venv python3.12-dev \
+    && curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12 \
+    && ln -sf /usr/bin/python3.12 /usr/bin/python3 \
+    && ln -sf /usr/bin/python3.12 /usr/bin/python \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Order matters: fish-speech hard-pins torch==2.8.0, which breaks vllm's compiled
+# extension (undefined symbol at import), so vllm goes last and lifts torch back to
+# the version it was built against. vllm-omni does not depend on vllm by itself.
+# Pinned to the same fish-speech commit as the known-good .venv-vllm.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install --upgrade pip setuptools wheel \
+    && pip3 install \
+        "fish-speech @ git+https://github.com/fishaudio/fish-speech.git@3578e4e7099ee85464756dab27a3af86b5a21331" \
+        PyYAML python-dotenv \
+    && pip3 install "vllm==0.24.0" "vllm-omni==0.24.0" \
+    && python3 -c "import vllm, vllm_omni"
+
+COPY pyproject.toml README.md ./
+COPY src/fish_studio/__init__.py src/fish_studio/
+COPY src/fish_studio/runtime src/fish_studio/runtime
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install --no-deps .
+
+COPY configs/fish_speech_deploy.yaml configs/
+COPY scripts/generate_fish_deploy.py scripts/
+COPY docker/vllm-entrypoint.sh docker/healthcheck-vllm.sh docker/
+
+RUN chmod +x docker/vllm-entrypoint.sh docker/healthcheck-vllm.sh
+
+ENV PATH="/usr/local/bin:${PATH}" \
+    VLLM_USE_FLASHINFER_SAMPLER=0
+
+VOLUME ["/data"]
+EXPOSE 8091
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=600s --retries=3 \
+    CMD ["/app/docker/healthcheck-vllm.sh"]
+
+ENTRYPOINT ["/app/docker/vllm-entrypoint.sh"]

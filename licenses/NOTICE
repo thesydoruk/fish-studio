@@ -1,0 +1,39 @@
+Fish Studio
+Copyright (c) 2026 Valerii Sydoruk
+
+The original source in this repository (HTTP server, dataset builder, training
+orchestration, timing, text normalization, and related tools) is licensed
+under the MIT License. See LICENSE.
+
+------------------------------------------------------------------------------
+Fish Audio Materials
+------------------------------------------------------------------------------
+
+This model is licensed under the Fish Audio Research License, Copyright © 39 AI, INC. All Rights Reserved.
+
+This software is Built with Fish Audio. It depends on Fish Speech
+(https://github.com/fishaudio/fish-speech, tag v2.0.0-beta) and the s2-pro
+model weights (https://huggingface.co/fishaudio/s2-pro). Those are Fish Audio
+Materials under the Fish Audio Research License. A copy of that license is at
+licenses/FISH-AUDIO-RESEARCH-LICENSE.txt.
+
+This repository does not vendor Fish Speech source or ship s2-pro weights.
+They are installed at runtime (pip from the fish-speech git tag, and a
+Hugging Face snapshot via install.sh).
+
+How this project uses and modifies Fish Audio Materials:
+
+- Runtime dependency on fish-speech v2.0.0-beta (not copied into this tree).
+- Training-time patches in src/fish_studio/training/ (especially
+  lora_patch.py and reference_dataset.py): LoRA module targeting, tied
+  embedding logits, embedding adapter scale, and a position gate that keeps
+  adapters off the system/reference prefix.
+- install.sh downloads the fishaudio/s2-pro checkpoint for local inference
+  and fine-tuning.
+- LoRA adapters and merged checkpoints produced by this pipeline are
+  Derivative Works of the s2-pro Model under the Fish Audio Research License.
+  They are not included in this repository.
+
+Research and non-commercial use of Fish Audio Materials is permitted under
+that license. Commercial use requires a separate written license from
+Fish Audio (https://fish.audio, business@fish.audio).

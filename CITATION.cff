@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+title: Fish Studio
+message: If you use this software, please cite it.
+type: software
+authors:
+  - family-names: Sydoruk
+    given-names: Valerii
+repository-code: https://github.com/thesydoruk/fish-studio
+license: MIT
+version: 0.5.0
+abstract: >
+  HTTP TTS server with voice cloning via Fish Speech s2-pro, plus a dataset
+  builder and LoRA fine-tuning pipeline for Ukrainian.

@@ -1,0 +1,73 @@
+# Copy .env.example to .env and edit for your setup.
+# Fish Speech vLLM-Omni + HTTP proxy via Docker Compose.
+#
+# Rebuild cache: both Dockerfiles use BuildKit cache mounts (apt/pip); the server
+# image also keeps a layer cache under .docker-cache/ (gitignored).
+services:
+  vllm:
+    build:
+      context: .
+      # No local cache export here: the image is ~27 GB, so writing it out costs
+      # more than it saves. The pip cache mount already avoids re-downloading torch.
+      dockerfile: docker/Dockerfile.vllm
+    env_file:
+      - .env
+    environment:
+      DATA_ROOT: /data
+      FISH_SPEECH_BASE_URL: http://127.0.0.1:${VLLM_PORT:-8091}
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./data:/data
+      - ./src/fish_studio/runtime/vllm_health.py:/app/src/fish_studio/runtime/vllm_health.py:ro
+      - ./docker/healthcheck-vllm.sh:/app/docker/healthcheck-vllm.sh:ro
+    ports:
+      - "${VLLM_PUBLISH_PORT:-8091}:${VLLM_PORT:-8091}"
+    gpus: all
+    restart: unless-stopped
+    labels:
+      autoheal: "true"
+    healthcheck:
+      test: ["CMD", "python3", "/app/src/fish_studio/runtime/vllm_health.py", "--container"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 600s
+
+  autoheal:
+    image: willfarrell/autoheal:latest
+    restart: unless-stopped
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+      AUTOHEAL_INTERVAL: 15
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.server
+      cache_from:
+        - type=local,src=.docker-cache/server
+      cache_to:
+        - type=local,dest=.docker-cache/server,mode=max
+    depends_on:
+      vllm:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATA_ROOT: /data
+      FISH_SPEECH_BASE_URL: http://vllm:${VLLM_PORT:-8091}
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./data:/data
+      - ./docker/healthcheck-server.sh:/app/docker/healthcheck-server.sh:ro
+    ports:
+      - "${SERVER_PUBLISH_PORT:-8080}:${INFERENCE_PORT:-8080}"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:${INFERENCE_PORT:-8080}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
