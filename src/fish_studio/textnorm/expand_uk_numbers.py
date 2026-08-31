@@ -13,6 +13,7 @@ from fish_studio.textnorm.uk_numwords import (
     decimal_words,
     half_words,
     ordinal,
+    phone_words,
     version_words,
     year_words,
 )
@@ -225,6 +226,32 @@ def _expand_year_with_roku(match: re.Match[str]) -> str:
     return prefix + year_words(year, case="loc") + suffix
 
 
+def _expand_phone(match: re.Match[str]) -> str:
+    return phone_words(match.group("num"))
+
+
+# The hour is an ordinal, so the preposition in front of it sets the case:
+# "о 21:00" → о двадцять першій, "з 09.00 до 18.00" → з дев'ятої до вісімнадцятої.
+_TIME_CASE_BY_PREP: dict[str, str] = {
+    "з": "gen",
+    "із": "gen",
+    "зі": "gen",
+    "від": "gen",
+    "до": "gen",
+    "після": "gen",
+    "о": "loc",
+    "об": "loc",
+}
+_WORD_BEFORE_RE = re.compile(r"([^\W\d_]+)\s*$")
+
+
+def _hour_case(match: re.Match[str]) -> str:
+    word = _WORD_BEFORE_RE.search(match.string[: match.start()])
+    if word is None:
+        return "nom"
+    return _TIME_CASE_BY_PREP.get(word.group(1).casefold(), "nom")
+
+
 def _expand_time(match: re.Match[str]) -> str:
     hour = int(match.group("hour"))
     if hour == 0:
@@ -234,11 +261,8 @@ def _expand_time(match: re.Match[str]) -> str:
     else:
         hour = hour % 24 or 24
     # 0:00 → дванадцята / нульова — keep literal midnight as "нульова"
-    hour_words = (
-        ordinal(12, gender="fem", case="nom")
-        if hour == 0
-        else ordinal(hour, gender="fem", case="nom")
-    )
+    case = _hour_case(match)
+    hour_words = ordinal(12 if hour == 0 else hour, gender="fem", case=case)
     minutes = int(match.group("num"))
     return f"{hour_words} {clock_minutes(minutes)}"
 
@@ -395,6 +419,8 @@ _HANDLERS: dict[str, Callable[[re.Match[str]], str]] = {
     "date_day_month_year": _expand_date,
     "year_with_roku": _expand_year_with_roku,
     "time_hhmm": _expand_time,
+    "time_hhmm_dot": _expand_time,
+    "phone_hyphen": _expand_phone,
     "radio_hour": _expand_radio_hour,
     "percent": _expand_percent,
     "caps_amount": _expand_caps,

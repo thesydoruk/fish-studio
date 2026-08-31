@@ -111,6 +111,42 @@ _RULES: tuple[NumberRule, ...] = (
         ),
     ),
     NumberRule(
+        id="time_hhmm_dot",
+        description="Clock time written with a dot (09.00, з 18.00). Not versions.",
+        # Lookbehinds are fixed-width. Leading-zero hours are clocks even alone.
+        # A trailing unit or % means it was a decimal, so those spans are left
+        # to the percent / duration rules.
+        pattern=re.compile(
+            r"(?i)(?:(?<=\sз\s)|(?<=\sдо\s)|(?<=\sо\s)|(?<=\sоб\s)"
+            r"|(?<=^з\s)|(?<=^до\s)|(?<=^о\s)|(?<=^об\s)"
+            r"|(?=0\d))"
+            r"\b(?P<hour>\d{1,2})\.(?P<num>[0-5]\d)\b"
+            r"(?!\s*(?:%|відсот|градус|метр|кілометр|км\b|грн|гривн))"
+        ),
+        expand="Same as HH:MM, case from the preposition "
+        "(з 09.00 до 18.00 → з дев'ятої нуль нуль до вісімнадцятої нуль нуль). "
+        "Bare 1.0 / 5.56 stay versions.",
+        corpus_hits=4,
+        examples=(
+            "Години роботи: з 09.00 до 18.00.",
+            "з 9.00",
+            "до 18.00",
+            "о 09.00",
+        ),
+    ),
+    NumberRule(
+        id="phone_hyphen",
+        description="Hyphenated phone / catalogue numbers (005-02-55-211).",
+        # 3+ groups, or 2+ groups that start with 0 so 10-15 stays a range.
+        pattern=re.compile(r"\b(?P<num>0\d{1,3}(?:[-–—‑]\d{2,4})+|\d{2,4}(?:[-–—‑]\d{2,4}){2,})\b"),
+        expand="Each digit spoken, a pause between groups (005-02 → нуль нуль п'ять, нуль два).",
+        corpus_hits=6,
+        examples=(
+            "Телефонуйте за номером 005-02-55-211",
+            "005-02-55-211",
+        ),
+    ),
+    NumberRule(
         id="radio_hour",
         description="Radio Freedom style 'N година …'.",
         pattern=re.compile(r"(?i)\b(?P<num>\d{1,2})\s+година\b"),

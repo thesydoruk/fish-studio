@@ -32,6 +32,16 @@ def test_date_and_time() -> None:
     assert "time_hhmm" in ids
 
 
+def test_phone_and_dotted_clock() -> None:
+    ids = [
+        rule.id
+        for rule, _ in classify_number_spans(
+            "за номером 005-02-55-211. з 09.00 до 18.00."
+        )
+    ]
+    assert ids == ["phone_hyphen", "time_hhmm_dot", "time_hhmm_dot"]
+
+
 def test_year_locative() -> None:
     hits = classify_number_spans("Битви - це так у 2077-му.")
     assert hits[0][0].id == "year_with_roku"

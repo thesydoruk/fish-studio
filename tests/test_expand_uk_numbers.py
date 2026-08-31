@@ -48,8 +48,9 @@ def test_date_and_year() -> None:
 
 def test_time_percent_countdown() -> None:
     assert expand_uk_numbers("Шоу починається рівно о 21:00.") == (
-        "Шоу починається рівно о двадцять перша нуль нуль."
+        "Шоу починається рівно о двадцять першій нуль нуль."
     )
+    assert expand_uk_numbers("Час... 12:35.") == "Час... дванадцята тридцять п'ять."
     assert expand_uk_numbers("35% алкоголю.") == "тридцять п'ять відсотків алкоголю."
     assert expand_uk_numbers("5... 4... 3...") == "п'ять... чотири... три..."
 
@@ -110,6 +111,41 @@ def test_duration_and_bare_decimals() -> None:
 def test_versions_stay_spoken_digits() -> None:
     assert expand_uk_numbers("людина моделі 1.0") == "людина моделі один нуль"
     assert expand_uk_numbers("пару коробок 5.56") == "пару коробок п'ять п'ятдесят шість"
+
+
+def test_dotted_clock_takes_case_from_preposition() -> None:
+    assert expand_uk_numbers("Години роботи: з 09.00 до 18.00.") == (
+        "Години роботи: з дев'ятої нуль нуль до вісімнадцятої нуль нуль."
+    )
+    assert expand_uk_numbers("з 9.00") == "з дев'ятої нуль нуль"
+    assert expand_uk_numbers("о 09.00") == "о дев'ятій нуль нуль"
+
+
+def test_dotted_decimal_with_unit_is_not_a_clock() -> None:
+    assert expand_uk_numbers("до 12.50 відсотка") == "до дванадцять цілих п'ятдесят сотих відсотка"
+    assert expand_uk_numbers("з 13.2 години") == "з тринадцять цілих дві десятих години"
+    assert expand_uk_numbers("відстань 1.5 км") == "відстань півтора км"
+
+
+def test_hyphenated_phone_keeps_leading_zeros() -> None:
+    assert expand_uk_numbers("Телефонуйте за номером 005-02-55-211") == (
+        "Телефонуйте за номером нуль нуль п'ять, нуль два, п'ять п'ять, два один один"
+    )
+    # Two-group ranges without a leading zero stay ranges.
+    assert expand_uk_numbers("10-15") == "десять — п'ятнадцять"
+    assert expand_uk_numbers("2077-2078") == "дві тисячі сімдесят сім — дві тисячі сімдесят вісім"
+
+
+def test_library_notice_line() -> None:
+    out = expand_uk_numbers(
+        "Якщо картка загубилася, будь ласка, поверніть її до бібліотеки. "
+        "Телефонуйте за номером 005-02-55-211 або завітайте до нас за адресою: "
+        "вулиця Мерое, 78, Джемрок. Години роботи: з 09.00 до 18.00."
+    )
+    assert not any(ch.isdigit() for ch in out)
+    assert "нуль нуль п'ять, нуль два, п'ять п'ять, два один один" in out
+    assert "вулиця Мерое, сімдесят вісім, Джемрок" in out
+    assert "з дев'ятої нуль нуль до вісімнадцятої нуль нуль" in out
 
 
 def test_alnum_left_alone() -> None:

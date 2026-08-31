@@ -6,6 +6,8 @@ clock hours in dialogue lines. Not a general morphological engine.
 
 from __future__ import annotations
 
+import re
+
 _ONES_MASC = (
     "нуль",
     "один",
@@ -436,6 +438,17 @@ def half_words(whole: int, *, gender: str = "masc") -> str:
 def version_words(whole: int, frac: str) -> str:
     """Model/caliber style ``1.0`` / ``5.56`` → ``один нуль`` / ``п'ять п'ятдесят шість``."""
     return f"{cardinal(whole)} {cardinal(int(frac))}"
+
+
+def phone_words(span: str) -> str:
+    """Hyphenated phone groups, digit-by-digit so leading zeros stay audible."""
+    spoken = []
+    for group in re.split(r"[-–—‑]", span):
+        digits = [ch for ch in group if ch.isdigit()]
+        if digits:
+            spoken.append(" ".join(cardinal(int(ch)) for ch in digits))
+    # Comma, not a dash: the groups are pauses, nothing is spoken between them.
+    return ", ".join(spoken)
 
 
 def clock_minutes(n: int) -> str:
