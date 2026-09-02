@@ -27,8 +27,7 @@ The HTTP server proxies synthesis to an external [vLLM-Omni](https://github.com/
 ./run.sh install all
 cp .env.example .env
 ./run.sh vllm install
-./run.sh vllm start
-./run.sh serve
+./run.sh stack          # vLLM + HTTP proxy in the background
 ```
 
 CLI entry point: `fish-server` or `python -m fish_studio.server.serve`
@@ -146,6 +145,7 @@ Single entry point: **`./run.sh`**
 | --------------------------- | ------------------------------------------------------------------------------------------- |
 | `./run.sh install [target]` | Create venv, install deps, download checkpoints                                             |
 | `./run.sh server`           | Start Fish Speech TTS HTTP server                                                           |
+| `./run.sh stack [cmd]`      | Whole stack in the background: `start` (default), `stop`, `restart`, `status`               |
 | `./run.sh vllm <cmd>`       | vLLM-Omni server: `install`, `start`, `stop`, `restart`, `status`                           |
 | `./run.sh dataset <cmd>`    | Dataset builder (`run`, `merge`, `all`, `sources`, `datasets`, `hf-import`, …)               |
 | `./run.sh dataset-build`    | Run all enabled sources + merge (shortcut)                                                  |

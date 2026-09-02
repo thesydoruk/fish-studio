@@ -277,8 +277,7 @@ a live `model.safetensors`):
 ./run.sh vllm stop
 ./run.sh train export-vllm --output data/training/vllm
 # FISH_SPEECH_MODEL=training/vllm
-./run.sh vllm start
-./run.sh server start
+./run.sh stack start
 ```
 
 ## 7. Practical expectations

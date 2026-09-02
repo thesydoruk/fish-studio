@@ -19,6 +19,7 @@ Commands:
   install [target]     Create venv, install deps, download checkpoints.
                        Targets: server (default) | dataset | training | all | dev
   server [-c config]   Start Fish Speech TTS HTTP server (proxy to vLLM)
+  stack [start|…]      Whole TTS stack in the background: vLLM, then HTTP proxy
   vllm <cmd>           vLLM-Omni TTS server: install, start, stop, restart, status
   dataset <cmd>        Dataset builder (fish-dataset): run, merge, all, sources,
                        datasets, hf-import, …
@@ -43,6 +44,7 @@ Examples:
   ./run.sh dataset-build
   ./run.sh bg-train
   ./run.sh server start
+  ./run.sh stack
   ./run.sh vllm install
   ./run.sh vllm start
   ./run.sh status
@@ -143,6 +145,9 @@ EOF
     ;;
   vllm)
     exec "${ROOT}/scripts/vllm.sh" "$@"
+    ;;
+  stack)
+    exec "${ROOT}/scripts/stack.sh" "$@"
     ;;
   bg-train)
     exec "${ROOT}/scripts/bg-train.sh" "$@"
