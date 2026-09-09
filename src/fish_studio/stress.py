@@ -82,9 +82,9 @@ _WORD_RE = re.compile(
 _cpu_stanza_patched = False
 _homonym_patch_installed = False
 
-# Dictionary lists two stresses on the same POS tags for зв'язок (masc) vs
-# зв'язка (fem). Stanza already picks Gender/Case; skip then drops both
-# marks. Prefer the reading that belongs to that gender.
+# When the dictionary lists two accents and skip would leave the word bare,
+# pick the reading that matches Stanza features. No match → still skip, so a
+# rare alternate is not forced the way a lexicon override would force it.
 # Values are insert-after indexes used by ukrainian_word_stress.
 _HOMONYM_ACCENT_BY_FEATS: dict[str, tuple[tuple[tuple[str, ...], int], ...]] = {
     "зв'язок": ((("Gender=Masc",), 6),),  # зв'язо́к
@@ -97,6 +97,17 @@ _HOMONYM_ACCENT_BY_FEATS: dict[str, tuple[tuple[tuple[str, ...], int], ...]] = {
         (("Gender=Masc",), 7),
         (("Gender=Fem",), 4),
     ),
+    # Only when the required tag actually separates the two dictionary readings.
+    "бути": ((("VerbForm=Inf",), 2),),  # бу́ти, not emphatic бути́
+    "піти": ((("VerbForm=Inf",), 4),),  # піти́
+    "тікати": ((("VerbForm=Inf",), 4),),  # тіка́ти
+    "послухати": ((("VerbForm=Inf",), 5),),  # послу́хати
+    "послухай": ((("Mood=Imp",), 5),),  # послу́хай
+    "послухайте": ((("Mood=Imp",), 5),),  # послу́хайте
+    "своїм": ((("Case=Ins",), 4),),  # свої́м, not dative сво́їм
+    "руці": ((("Case=Dat",), 4), (("Case=Loc",), 4)),  # руці́
+    "спокої": ((("Case=Loc",), 3),),  # спо́кої
+    "сорок": ((("upos=NUM",), 2),),  # со́рок
 }
 
 
@@ -183,18 +194,34 @@ def _load_lexicon(path: str) -> dict[str, str]:
     return lexicon
 
 
+def _lexicon_form(word: str, lexicon: dict[str, str]) -> str | None:
+    hit = lexicon.get(_casefold_key(word))
+    if hit is None:
+        return None
+    return _match_case(word, hit)
+
+
 def apply_lexicon(text: str, lexicon: dict[str, str]) -> str:
-    """Replace whole words using the stress lexicon (lexicon wins)."""
+    """Replace whole words using the stress lexicon (lexicon wins).
+
+    Hyphenated compounds also try each stem, so ``коли́-небудь`` becomes
+    ``коли́-не́будь`` from the ``не́будь`` entry without listing every form.
+    """
     if not text or not lexicon:
         return text
 
     def repl(match: re.Match[str]) -> str:
         word = match.group(0)
-        key = _casefold_key(word)
-        hit = lexicon.get(key)
-        if hit is None:
+        hit = _lexicon_form(word, lexicon)
+        if hit is not None:
+            return hit
+        if "-" not in strip_stress_marks(word):
             return word
-        return _match_case(word, hit)
+        parts = word.split("-")
+        rewritten = [_lexicon_form(part, lexicon) or part for part in parts]
+        if rewritten == parts:
+            return word
+        return "-".join(rewritten)
 
     return _WORD_RE.sub(repl, text)
 
@@ -235,7 +262,7 @@ def _install_cpu_stanza_pipeline() -> None:
 
 
 def _preferred_homonym_accent(parse: dict) -> int | None:
-    """Accent index for a gender-tagged homonym, or None if we cannot choose."""
+    """Accent index when Stanza tags pick one reading, or None to keep skip."""
     word = _casefold_key(str(parse.get("text") or ""))
     rules = _HOMONYM_ACCENT_BY_FEATS.get(word)
     if not rules:
@@ -250,7 +277,7 @@ def _preferred_homonym_accent(parse: dict) -> int | None:
 
 
 def _install_homonym_disambiguation() -> None:
-    """If Stanza matched tags but two stresses remain, pick the gender's reading."""
+    """If Stanza matched tags but skip left the word bare, pick that reading."""
     global _homonym_patch_installed
     if _homonym_patch_installed:
         return
@@ -311,22 +338,24 @@ def apply_stress_marks(
 
     Text is normalised (apostrophes) first. Unless ``force`` is set, already-marked
     text is left untouched apart from lexicon overrides, so repeated dataset passes
-    stay idempotent. ``disambiguation`` defaults to dictionary lookup rather than
-    the library's ``auto``: ``auto`` silently switches to Stanza when that package
-    happens to be installed, which would make training and synthesis mark the same
-    sentence differently.
+    stay idempotent. ``lexicon`` is the unambiguous override file
+    (``configs/stress_lexicon.txt``). ``disambiguation`` defaults to dictionary
+    lookup rather than the library's ``auto``: ``auto`` silently switches to
+    Stanza when that package happens to be installed, which would make training
+    and synthesis mark the same sentence differently.
     """
     if not text.strip():
         return text
 
     text = normalize_uk_text(text)
+    lexicon = lexicon or {}
     if force:
         text = strip_stress_marks(text)
     elif has_stress_marks(text):
-        return apply_lexicon(text, lexicon or {})
+        return apply_lexicon(text, lexicon)
 
     marked = _stressifier(on_ambiguity, disambiguation, prefer_cpu)(text)
-    return apply_lexicon(marked, lexicon or {})
+    return apply_lexicon(marked, lexicon)
 
 
 def stressify(

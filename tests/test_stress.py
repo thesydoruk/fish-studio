@@ -9,6 +9,7 @@ import pytest
 from fish_studio.config import StressConfig
 from fish_studio.stress import (
     COMBINING_ACUTE,
+    _load_lexicon,
     _preferred_homonym_accent,
     apply_lexicon,
     apply_stress_marks,
@@ -17,6 +18,8 @@ from fish_studio.stress import (
     stressify,
     strip_stress_marks,
 )
+
+_LEXICON = Path(__file__).resolve().parents[1] / "configs" / "stress_lexicon.txt"
 
 pytest.importorskip("ukrainian_word_stress")
 
@@ -167,6 +170,69 @@ def test_stanza_keeps_zviazka_stress_on_the_stem() -> None:
 
     marked = apply_stress_marks("зв'язка ключів", disambiguation="stanza", lexicon={})
     assert f"зв'я{COMBINING_ACUTE}зка" in marked
+
+
+def test_lexicon_file_marks_unambiguous_words() -> None:
+    marked = stressify(
+        "Ральф сказав йому про Емоджин.",
+        StressConfig(enabled=True, lexicon_path=str(_LEXICON), disambiguation="dictionary"),
+    )
+    assert f"Ра{COMBINING_ACUTE}льф" in marked
+    assert f"йому{COMBINING_ACUTE}" in marked
+    assert f"Е{COMBINING_ACUTE}моджин" in marked
+
+
+def test_hyphen_stem_lexicon_marks_second_part() -> None:
+    lexicon = _load_lexicon(str(_LEXICON))
+    assert apply_lexicon(f"коли{COMBINING_ACUTE}-небудь", lexicon) == (
+        f"коли{COMBINING_ACUTE}-не{COMBINING_ACUTE}будь"
+    )
+    assert apply_lexicon(f"півде{COMBINING_ACUTE}нно-західних", lexicon) == (
+        f"півде{COMBINING_ACUTE}нно-за{COMBINING_ACUTE}хідних"
+    )
+
+
+def test_lexicon_file_covers_full_audit_names() -> None:
+    marked = stressify(
+        "Кейті і Еврару в Конкорда.",
+        StressConfig(enabled=True, lexicon_path=str(_LEXICON), disambiguation="dictionary"),
+    )
+    assert f"Ке{COMBINING_ACUTE}йті" in marked
+    assert f"Евра{COMBINING_ACUTE}ру" in marked
+    assert f"Ко{COMBINING_ACUTE}нкорда" in marked
+
+
+def test_ambiguous_former_lexicon_words_are_not_forced() -> None:
+    # File used to pin one reading. Dictionary may still mark its own choice;
+    # we must not override it to the old lexicon form.
+    marked = apply_stress_marks("гуля тома будь-кого", disambiguation="dictionary", lexicon={})
+    assert "гуля" in marked
+    assert f"то{COMBINING_ACUTE}ма" not in marked
+    assert f"будь-кого{COMBINING_ACUTE}" not in marked
+
+
+def test_buty_infinitive_prefers_first_vowel() -> None:
+    parse = {
+        "text": "бути",
+        "upos": "VERB",
+        "feats": "Aspect=Imp|VerbForm=Inf",
+    }
+    assert _preferred_homonym_accent(parse) == 2
+
+
+def test_buty_without_infinitive_tag_stays_undecided() -> None:
+    assert _preferred_homonym_accent({"text": "бути", "upos": "NOUN", "feats": ""}) is None
+
+
+def test_overlay_file_can_still_force_a_reading(tmp_path: Path) -> None:
+    lex = tmp_path / "lex.txt"
+    lex.write_text(f"тома\tтома{COMBINING_ACUTE}\n", encoding="utf-8")
+
+    marked = stressify(
+        "том тома",
+        StressConfig(enabled=True, lexicon_path=str(lex), disambiguation="dictionary"),
+    )
+    assert f"тома{COMBINING_ACUTE}" in marked
 
 
 def test_apostrophe_fix_enables_dictionary_mark() -> None:

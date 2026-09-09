@@ -362,12 +362,13 @@ spacing acute (U+00B4), which makes `ліхта́рик` a reliable way to corre
 reads wrong — including domain vocabulary absent from any audiobook corpus.
 
 Dataset export (`./run.sh dataset …` and `./run.sh train export`) marks
-transcripts as it writes them: apostrophe normalisation → dictionary/Stanza →
-lexicon (`configs/stress_lexicon.txt`) → acoustic fallback from the clip WAV fo
-words still unmarked. Synthesis uses the same text pipeline without the acoustic
-step (no aligned audio on the request). Marked text sounds natural only afte
-fine-tuning on marked transcripts, so keep `STRESS_*` settings identical between
-training and serving.
+transcripts as it writes them: apostrophe normalisation → dictionary/Stanza
+(heteronyms stay unmarked unless Stanza features pick a reading) → unambiguous
+lexicon (`configs/stress_lexicon.txt`) → acoustic fallback from the clip WAV
+for words still unmarked. Synthesis uses the same text pipeline without the
+acoustic step (no aligned audio on the request). Marked text sounds natural
+only after fine-tuning on marked transcripts, so keep `STRESS_*` settings
+identical between training and serving.
 
 Changing stress settings (or the lexicon) means re-exporting — there is no
 in-place backfill step:

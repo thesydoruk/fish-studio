@@ -177,7 +177,8 @@ class StressConfig:
     # skip leaves heteronyms unmarked rather than guessing; see fish_studio.stress
     on_ambiguity: str = "skip"
     disambiguation: str = "dictionary"
-    # Relative to the .env directory unless absolute. Empty disables the lexicon.
+    # Unambiguous overrides only. Relative to the .env directory unless absolute.
+    # Empty disables the file (dictionary / Stanza still run).
     lexicon_path: str = "configs/stress_lexicon.txt"
     # Keep Stanza on CPU so dataset prep / the API do not steal the TTS GPU.
     prefer_cpu: bool = True
