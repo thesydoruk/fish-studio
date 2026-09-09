@@ -86,21 +86,30 @@ _homonym_patch_installed = False
 # pick the reading that matches Stanza features. No match → still skip, so a
 # rare alternate is not forced the way a lexicon override would force it.
 # Values are insert-after indexes used by ukrainian_word_stress.
+#
+# зв'язок (masc, connections / dating) vs зв'язка (fem, bundle): the
+# dictionary puts both stem and ending stress on the same masc tags.
+_ZVIAZOK_VS_ZVIAZKA: tuple[tuple[tuple[str, ...], int], ...] = (
+    (("Gender=Masc",), 7),  # зв'язку́ / зв'язки́ / зв'язка́ми
+    (("Gender=Fem",), 4),  # зв'я́зку / зв'я́зки / зв'я́зками
+)
+
 _HOMONYM_ACCENT_BY_FEATS: dict[str, tuple[tuple[tuple[str, ...], int], ...]] = {
     "зв'язок": ((("Gender=Masc",), 6),),  # зв'язо́к
-    "зв'язку": (
-        (("Gender=Masc",), 7),  # зв'язку́
-        (("Gender=Fem",), 4),  # зв'я́зку (acc of зв'язка)
-    ),
+    "зв'язку": _ZVIAZOK_VS_ZVIAZKA,
     "зв'язком": ((("Gender=Masc",), 7),),  # зв'язко́м
-    "зв'язки": (
-        (("Gender=Masc",), 7),
-        (("Gender=Fem",), 4),
-    ),
+    "зв'язки": _ZVIAZOK_VS_ZVIAZKA,
+    "зв'язків": _ZVIAZOK_VS_ZVIAZKA,
+    "зв'язкам": _ZVIAZOK_VS_ZVIAZKA,
+    "зв'язками": _ZVIAZOK_VS_ZVIAZKA,
+    "зв'язках": _ZVIAZOK_VS_ZVIAZKA,
     # Only when the required tag actually separates the two dictionary readings.
     "бути": ((("VerbForm=Inf",), 2),),  # бу́ти, not emphatic бути́
     "піти": ((("VerbForm=Inf",), 4),),  # піти́
     "тікати": ((("VerbForm=Inf",), 4),),  # тіка́ти
+    # наси́пати (pf) / насипа́ти (ipf) share the same Inf tags. Stanza also
+    # tags почали насипати as Perf, so Aspect cannot separate them.
+    "насипати": ((("VerbForm=Inf",), 6),),  # насипа́ти
     "послухати": ((("VerbForm=Inf",), 5),),  # послу́хати
     "послухай": ((("Mood=Imp",), 5),),  # послу́хай
     "послухайте": ((("Mood=Imp",), 5),),  # послу́хайте

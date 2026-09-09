@@ -133,6 +133,24 @@ def test_zviazka_fem_accusative_prefers_stem() -> None:
     assert _preferred_homonym_accent(parse) == 4
 
 
+def test_zviazkamy_masc_instrumental_prefers_ending() -> None:
+    parse = {
+        "text": "зв'язками",
+        "upos": "NOUN",
+        "feats": "Animacy=Inan|Case=Ins|Gender=Masc|Number=Plur",
+    }
+    assert _preferred_homonym_accent(parse) == 7
+
+
+def test_zviazkamy_fem_instrumental_prefers_stem() -> None:
+    parse = {
+        "text": "зв'язками",
+        "upos": "NOUN",
+        "feats": "Animacy=Inan|Case=Ins|Gender=Fem|Number=Plur",
+    }
+    assert _preferred_homonym_accent(parse) == 4
+
+
 def test_zviazok_unrelated_parse_has_no_preference() -> None:
     assert _preferred_homonym_accent({"text": "броня", "feats": "Gender=Fem"}) is None
 
@@ -172,9 +190,29 @@ def test_stanza_keeps_zviazka_stress_on_the_stem() -> None:
     assert f"зв'я{COMBINING_ACUTE}зка" in marked
 
 
+def test_stanza_marks_dating_zviazkamy_on_the_ending() -> None:
+    stanza = pytest.importorskip("stanza")
+    try:
+        stanza.Pipeline(
+            "uk",
+            processors="tokenize,pos,mwt",
+            download_method=stanza.pipeline.core.DownloadMethod.REUSE_RESOURCES,
+        )
+    except Exception:
+        pytest.skip("Ukrainian Stanza models are not available")
+
+    marked = apply_stress_marks(
+        "Вона бавиться випадковими зв'язками.",
+        disambiguation="stanza",
+        lexicon={},
+    )
+    assert f"зв'язка{COMBINING_ACUTE}ми" in marked
+    assert f"зв'я{COMBINING_ACUTE}зками" not in marked
+
+
 def test_lexicon_file_marks_unambiguous_words() -> None:
     marked = stressify(
-        "Ральф сказав йому про Емоджин. Стіна стоїть на заході.",
+        "Ральф сказав йому про Емоджин. Стіна стоїть на заході. Не хочу бути стукачем. Все скінчено. Почали насипати. Активуйте їх. Болотники поводилися тихо.",
         StressConfig(enabled=True, lexicon_path=str(_LEXICON), disambiguation="dictionary"),
     )
     assert f"Ра{COMBINING_ACUTE}льф" in marked
@@ -182,6 +220,21 @@ def test_lexicon_file_marks_unambiguous_words() -> None:
     assert f"Е{COMBINING_ACUTE}моджин" in marked
     assert f"Стіна{COMBINING_ACUTE}" in marked
     assert f"за{COMBINING_ACUTE}ході" in marked
+    assert f"стукаче{COMBINING_ACUTE}м" in marked
+    assert f"скі{COMBINING_ACUTE}нчено" in marked
+    assert f"насипа{COMBINING_ACUTE}ти" in marked
+    assert f"Активу{COMBINING_ACUTE}йте" in marked
+    assert f"пово{COMBINING_ACUTE}дилися" in marked
+
+
+def test_lexicon_overrides_skincheno_even_when_sentence_already_marked() -> None:
+    lexicon = _load_lexicon(str(_LEXICON))
+    already = f"Все{COMBINING_ACUTE} скінчено, не буду стукачем. Активуйте їх. Вони поводилися тихо."
+    marked = apply_lexicon(already, lexicon)
+    assert f"скі{COMBINING_ACUTE}нчено" in marked
+    assert f"стукаче{COMBINING_ACUTE}м" in marked
+    assert f"Активу{COMBINING_ACUTE}йте" in marked
+    assert f"пово{COMBINING_ACUTE}дилися" in marked
 
 
 def test_hyphen_stem_lexicon_marks_second_part() -> None:
@@ -196,12 +249,15 @@ def test_hyphen_stem_lexicon_marks_second_part() -> None:
 
 def test_lexicon_file_covers_full_audit_names() -> None:
     marked = stressify(
-        "Кейті і Еврару в Конкорда.",
+        "Кейті і Еврару в Конкорда. Салемська відьма з Салема.",
         StressConfig(enabled=True, lexicon_path=str(_LEXICON), disambiguation="dictionary"),
     )
     assert f"Ке{COMBINING_ACUTE}йті" in marked
     assert f"Евра{COMBINING_ACUTE}ру" in marked
     assert f"Ко{COMBINING_ACUTE}нкорда" in marked
+    assert f"Са{COMBINING_ACUTE}лемська" in marked
+    assert f"Са{COMBINING_ACUTE}лема" in marked
+    assert f"Сале{COMBINING_ACUTE}мська" not in marked
 
 
 def test_ambiguous_former_lexicon_words_are_not_forced() -> None:
@@ -211,6 +267,35 @@ def test_ambiguous_former_lexicon_words_are_not_forced() -> None:
     assert "гуля" in marked
     assert f"то{COMBINING_ACUTE}ма" not in marked
     assert f"будь-кого{COMBINING_ACUTE}" not in marked
+
+
+def test_nasypaty_infinitive_prefers_the_thematic_vowel() -> None:
+    parse = {
+        "text": "насипати",
+        "upos": "VERB",
+        "feats": "Aspect=Perf|VerbForm=Inf",
+    }
+    assert _preferred_homonym_accent(parse) == 6
+
+
+def test_stanza_marks_pochaly_nasypaty_on_the_ending() -> None:
+    stanza = pytest.importorskip("stanza")
+    try:
+        stanza.Pipeline(
+            "uk",
+            processors="tokenize,pos,mwt",
+            download_method=stanza.pipeline.core.DownloadMethod.REUSE_RESOURCES,
+        )
+    except Exception:
+        pytest.skip("Ukrainian Stanza models are not available")
+
+    marked = apply_stress_marks(
+        "щоб вони почали насипати болотникам гарячого свинцю",
+        disambiguation="stanza",
+        lexicon={},
+    )
+    assert f"насипа{COMBINING_ACUTE}ти" in marked
+    assert f"наси{COMBINING_ACUTE}пати" not in marked
 
 
 def test_buty_infinitive_prefers_first_vowel() -> None:
