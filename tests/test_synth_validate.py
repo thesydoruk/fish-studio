@@ -131,6 +131,8 @@ def _proxy() -> VllmFishProxy:
             default_language="uk",
             synth_log_enabled=False,
             synth_log_dir=None,
+            synth_attempts=5,
+            voice_retry_below=0.3,
         )
     )
 
@@ -248,12 +250,19 @@ def test_attach_voice_retries_below_floor() -> None:
     assert tagged.voice_similarity == 0.18
 
 
+def test_attach_voice_retries_just_below_floor() -> None:
+    check = judge_raw_synth(_tone(3.0), SAMPLE_RATE, LINE)
+    tagged = attach_voice(check, 0.29)
+    assert tagged.ok is False
+    assert tagged.reason == "voice"
+
+
 def test_attach_voice_keeps_pass_at_floor() -> None:
     check = judge_raw_synth(_tone(3.0), SAMPLE_RATE, LINE)
-    tagged = attach_voice(check, 0.25)
+    tagged = attach_voice(check, 0.30)
     assert tagged.ok is True
     assert tagged.reason == ""
-    assert tagged.voice_similarity == 0.25
+    assert tagged.voice_similarity == 0.30
 
 
 def test_short_line_is_voice_scored() -> None:

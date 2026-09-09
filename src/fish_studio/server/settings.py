@@ -24,6 +24,8 @@ class FishSpeechSettings:
     synth_log_dir: Path | None = None
     synth_log_keep: int = 40
     synth_log_enabled: bool = True
+    synth_attempts: int = 5
+    voice_retry_below: float = 0.3
 
     @classmethod
     def from_project(cls, project: ProjectConfig) -> FishSpeechSettings:
@@ -42,6 +44,8 @@ class FishSpeechSettings:
             synth_log_dir=log_dir if fish.synth_log else None,
             synth_log_keep=max(1, int(fish.synth_log_keep)),
             synth_log_enabled=bool(fish.synth_log),
+            synth_attempts=max(1, int(fish.synth_attempts)),
+            voice_retry_below=float(fish.voice_retry_below),
         )
 
 

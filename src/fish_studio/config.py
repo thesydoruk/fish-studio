@@ -259,6 +259,10 @@ class FishSpeechConfig:
     # Persist recent synthesize dumps under {data_root}/logs/synthesis/.
     synth_log: bool = True
     synth_log_keep: int = 40
+    # Raw-take retries per chunk (silence / cutoff / weak clone).
+    synth_attempts: int = 5
+    # ECAPA cosine vs the clone prompt; below this the chunk is retried.
+    voice_retry_below: float = 0.3
 
 
 @dataclass

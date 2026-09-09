@@ -66,11 +66,11 @@ Each successful synthesize also dumps under `{DATA_ROOT}/logs/synthesis/` (see
 (before timing), `synth_final.wav` (returned audio). `LATEST` names the newest
 request id. Keep count: `FISH_SPEECH_SYNTH_LOG_KEEP` (default 40).
 
-Each chunk is retried up to 3 times if the raw take is silence, a cutoff, or
-the ECAPA cosine vs the clone prompt is below 0.25 (short lines included).
-`X-Voice-Similarity` is the weakest chunk score. Below 0.30 the WAV is still
-returned and `X-Synth-Warning` says so; if every attempt fails, the best take
-is kept.
+Each chunk is retried up to `FISH_SPEECH_SYNTH_ATTEMPTS` times (default 5) if
+the raw take is silence, a cutoff, or the ECAPA cosine vs the clone prompt is
+below `FISH_SPEECH_VOICE_RETRY_BELOW` (default 0.3; short lines included).
+`X-Voice-Similarity` is the weakest chunk score. A take still below the
+threshold after every attempt is returned with `X-Synth-Warning`.
 
 ### Timing fit
 

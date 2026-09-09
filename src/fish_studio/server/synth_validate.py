@@ -29,7 +29,7 @@ _SILENCE_ACTIVE_SEC = 0.25
 _CUTOFF_SYL_PER_SEC = 10.0
 _PEAK_EPS = 1.0 / 32_768
 
-MAX_SYNTH_ATTEMPTS = 3
+MAX_SYNTH_ATTEMPTS = 5
 # ASCII headers on the WAV response so a client can log a kept-bad take.
 SYNTH_WARNING_HEADER = "X-Synth-Warning"
 
@@ -80,12 +80,17 @@ def judge_raw_synth(audio: np.ndarray, sample_rate: int, text: str) -> SynthChec
     return SynthCheck(True, "", syllables, active, implied)
 
 
-def attach_voice(check: SynthCheck, similarity: float | None) -> SynthCheck:
+def attach_voice(
+    check: SynthCheck,
+    similarity: float | None,
+    *,
+    retry_below: float = VOICE_RETRY_BELOW,
+) -> SynthCheck:
     """Fold clone cosine into a quality verdict. Short lines are scored too.
 
     ``None`` means the clip could not be embedded (too short / encoder off) —
-    quality is left unchanged. Below ``VOICE_RETRY_BELOW`` a passing take
-    becomes a voice fail so the chunk loop retries.
+    quality is left unchanged. Below ``retry_below`` a passing take becomes a
+    voice fail so the chunk loop retries.
     """
     tagged = SynthCheck(
         ok=check.ok,
@@ -97,7 +102,7 @@ def attach_voice(check: SynthCheck, similarity: float | None) -> SynthCheck:
     )
     if not tagged.ok or similarity is None:
         return tagged
-    if similarity < VOICE_RETRY_BELOW:
+    if similarity < retry_below:
         return SynthCheck(
             False,
             "voice",
@@ -151,20 +156,30 @@ def line_voice_similarity(reports: list[dict]) -> float | None:
     return min(scores) if scores else None
 
 
-def quality_warning(reports: list[dict]) -> str:
+def quality_warning(
+    reports: list[dict],
+    *,
+    warn_below: float = VOICE_WARN_BELOW,
+    default_attempts: int = MAX_SYNTH_ATTEMPTS,
+) -> str:
     """Human-readable warning when a returned take is still broken or weakly cloned."""
     parts: list[str] = []
     multi = len(reports) > 1
     for index, report in enumerate(reports, start=1):
-        detail = _warning_detail(report)
+        detail = _warning_detail(report, warn_below=warn_below, default_attempts=default_attempts)
         if not detail:
             continue
         parts.append(f"chunk {index}: {detail}" if multi else detail)
     return "; ".join(parts)
 
 
-def _warning_detail(report: dict) -> str:
-    attempts = int(report.get("attempts") or MAX_SYNTH_ATTEMPTS)
+def _warning_detail(
+    report: dict,
+    *,
+    warn_below: float = VOICE_WARN_BELOW,
+    default_attempts: int = MAX_SYNTH_ATTEMPTS,
+) -> str:
+    attempts = int(report.get("attempts") or default_attempts)
     similarity = report.get("voice_similarity")
     sim_txt = "" if similarity is None else f", similarity {float(similarity):.2f}"
     if not report.get("ok", True):
@@ -182,6 +197,6 @@ def _warning_detail(report: dict) -> str:
             score = 0.0 if similarity is None else float(similarity)
             return f"voice after {attempts} attempts (similarity {score:.2f})"
         return f"{reason} after {attempts} attempts{sim_txt}"
-    if similarity is not None and float(similarity) < VOICE_WARN_BELOW:
+    if similarity is not None and float(similarity) < warn_below:
         return f"weak voice ({float(similarity):.2f})"
     return ""

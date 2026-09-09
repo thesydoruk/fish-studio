@@ -22,7 +22,6 @@ from fish_studio.server.references import (
 from fish_studio.server.settings import FishSpeechSettings
 from fish_studio.server.synth_log import SynthesisRequestLogger
 from fish_studio.server.synth_validate import (
-    MAX_SYNTH_ATTEMPTS,
     SynthCheck,
     attach_voice,
     judge_raw_synth,
@@ -181,7 +180,11 @@ class VllmFishProxy:
                     )
             loudness = match_loudness_to_reference(final, sample_rate, slot_ref, slot_rate)
             final = loudness.audio
-            warning = quality_warning(quality)
+            warning = quality_warning(
+                quality,
+                warn_below=self.settings.voice_retry_below,
+                default_attempts=self.settings.synth_attempts,
+            )
             voice_similarity = line_voice_similarity(quality)
             try:
                 self._synth_log.log(
@@ -249,7 +252,9 @@ class VllmFishProxy:
         ref_embedding: list[float] | None = None,
     ) -> tuple[np.ndarray, int, dict]:
         attempts: list[tuple[np.ndarray, int, SynthCheck]] = []
-        for attempt in range(1, MAX_SYNTH_ATTEMPTS + 1):
+        max_attempts = self.settings.synth_attempts
+        retry_below = self.settings.voice_retry_below
+        for attempt in range(1, max_attempts + 1):
             audio, sample_rate = _decode_wav(
                 self._request_speech(client, chunk, mime, ref_b64, reference_text)
             )
@@ -259,14 +264,14 @@ class VllmFishProxy:
                 if ref_embedding is None
                 else self._voice.similarity(audio, sample_rate, ref_embedding)
             )
-            check = attach_voice(check, similarity)
+            check = attach_voice(check, similarity, retry_below=retry_below)
             attempts.append((audio, sample_rate, check))
             if check.ok:
                 if attempt > 1:
                     logger.info(
                         "synth recovered on attempt %d/%d (%s, %.1f syl/s, %.2fs, sim=%s): %r",
                         attempt,
-                        MAX_SYNTH_ATTEMPTS,
+                        max_attempts,
                         check.reason or "ok",
                         check.implied_syl_per_sec,
                         check.active_speech_sec,
@@ -282,7 +287,7 @@ class VllmFishProxy:
                 "synth %s on attempt %d/%d (implied %.1f syl/s, active %.2fs, sim=%s): %r",
                 check.reason,
                 attempt,
-                MAX_SYNTH_ATTEMPTS,
+                max_attempts,
                 check.implied_syl_per_sec,
                 check.active_speech_sec,
                 _sim_label(check.voice_similarity),
@@ -292,14 +297,14 @@ class VllmFishProxy:
         audio, sample_rate, check = pick_best_attempt(attempts)
         logger.warning(
             "synth kept best failing take after %d attempts (%s, %.1f syl/s, sim=%s): %r",
-            MAX_SYNTH_ATTEMPTS,
+            max_attempts,
             check.reason,
             check.implied_syl_per_sec,
             _sim_label(check.voice_similarity),
             chunk,
         )
         return audio, sample_rate, {
-            "attempts": MAX_SYNTH_ATTEMPTS,
+            "attempts": max_attempts,
             "recovered": False,
             **check.metrics(),
         }
@@ -348,6 +353,8 @@ class VllmFishProxy:
             "chunk_length": self.settings.chunk_length,
             "sample_rate": self._sample_rate,
             "default_language": self.settings.default_language,
+            "synth_attempts": self.settings.synth_attempts,
+            "voice_retry_below": self.settings.voice_retry_below,
             "synth_log": {
                 "enabled": self._synth_log.enabled,
                 "dir": str(self.settings.synth_log_dir) if self.settings.synth_log_dir else None,
@@ -381,13 +388,13 @@ class VllmFishProxy:
                     "syllables-per-second rate and at most 1.3×, never slower. "
                     "A line that still overruns is logged as needs_shorter_line "
                     "rather than sped up further. Each chunk is retried up to "
-                    f"{MAX_SYNTH_ATTEMPTS} times if the raw take is silence, "
-                    "implies an impossible syllable rate (cutoff), or the ECAPA "
-                    "cosine vs the clone prompt is below 0.25 (including short "
-                    "lines). A valid take at or above 0.25 is kept; below 0.30 "
-                    "still sets X-Synth-Warning. If every attempt fails, the "
-                    "best take is returned. X-Voice-Similarity is the weakest "
-                    "chunk cosine. "
+                    f"{self.settings.synth_attempts} times if the raw take is "
+                    "silence, implies an impossible syllable rate (cutoff), or "
+                    "the ECAPA cosine vs the clone prompt is below "
+                    f"{self.settings.voice_retry_below:.2f} (including short "
+                    "lines). A take still below that floor after every attempt "
+                    "is returned with X-Synth-Warning. X-Voice-Similarity is "
+                    "the weakest chunk cosine. "
                     "After timing, a single linear gain "
                     "matches speech-gated BS.1770 loudness to the first "
                     "speaker_wav. That step is always on and is not a request flag."
