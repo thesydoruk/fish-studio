@@ -7,6 +7,7 @@ import pytest
 
 from fish_studio.timing import (
     TimingStretchError,
+    _room_tone,
     _tempo_rate,
     _trim_edge_silence,
     count_syllables,
@@ -163,7 +164,7 @@ def test_tempo_rate_is_capped_by_the_syllable_band() -> None:
 def test_tempo_rate_hits_the_speed_cap_when_the_band_still_has_room() -> None:
     rate = _tempo_rate(syl_per_sec=2.5, syl_per_sec_ref=5.0, duration_sec=8.0, slot_sec=2.0)
     assert rate == pytest.approx(tempo_rate_bounds()[1])
-    assert rate == pytest.approx(1.3)
+    assert rate == pytest.approx(1.25)
     assert 2.5 * rate <= syllable_rate_bounds()[1] + 1e-9
 
 
@@ -233,7 +234,25 @@ def test_trim_keeps_a_quiet_ending() -> None:
     line = np.concatenate([speech, decay, silence])
     out = _trim_edge_silence(line, SAMPLE_RATE)
     assert out.size > speech.size + int(SAMPLE_RATE * 0.12)
-    assert out.size < line.size - int(SAMPLE_RATE * 0.08)
+    assert out.size < line.size - int(SAMPLE_RATE * 0.04)
+
+
+def test_trim_keeps_a_softer_ending() -> None:
+    """A tail at ~4% of the peak used to fall under the old 5% floor."""
+    speech = _tone(2.0, amplitude=0.2)
+    decay = _tone(0.20, amplitude=0.008)
+    silence = np.zeros(int(SAMPLE_RATE * 0.40), dtype=np.float32)
+    line = np.concatenate([speech, decay, silence])
+    out = _trim_edge_silence(line, SAMPLE_RATE)
+    assert out.size > speech.size + int(SAMPLE_RATE * 0.16)
+    assert out.size < line.size
+
+
+def test_pause_fill_is_not_digital_zero() -> None:
+    gap = _tone(0.20, amplitude=0.004, freq=80.0)
+    fill = _room_tone(gap, 0, gap.size, int(SAMPLE_RATE * 0.12))
+    assert fill.size == int(SAMPLE_RATE * 0.12)
+    assert float(np.max(np.abs(fill))) > 0.0
 
 
 def test_active_speech_ignores_silence() -> None:

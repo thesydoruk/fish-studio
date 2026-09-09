@@ -33,6 +33,7 @@ from fish_studio.server.voiceprint import VoiceEncoder
 from fish_studio.synthesis import FISH_SYNTHESIS_DEFAULTS, SynthesisResult
 from fish_studio.textnorm import prepare_synthesis_text, split_synthesis_chunks
 from fish_studio.loudness import match_loudness_to_reference
+from fish_studio.speech_norm import normalize_speech
 from fish_studio.timing import (
     ensure_praat_psola,
     fit_timing_to_reference,
@@ -155,18 +156,20 @@ class VllmFishProxy:
             )
             self._sample_rate = sample_rate
             raw = concat_audio_chunks(pieces, sample_rate) if len(pieces) > 1 else pieces[0]
-            final = raw
+            speech = normalize_speech(raw, sample_rate)
+            leveled = speech.audio
+            timed = leveled
             timing: dict[str, Any] = {"enabled": match_timing}
             if match_timing:
                 fit = fit_timing_to_reference(
-                    raw,
+                    leveled,
                     sample_rate,
                     slot_ref,
                     slot_rate,
                     text_uk=text,
                     text_en=references[0].text,
                 )
-                final = fit.audio
+                timed = fit.audio
                 timing.update(fit.metrics())
                 if fit.needs_shorter_line:
                     logger.warning(
@@ -178,7 +181,9 @@ class VllmFishProxy:
                         fit.stretch_rate,
                         text_raw,
                     )
-            loudness = match_loudness_to_reference(final, sample_rate, slot_ref, slot_rate)
+            loudness = match_loudness_to_reference(
+                timed, sample_rate, slot_ref, slot_rate
+            )
             final = loudness.audio
             warning = quality_warning(
                 quality,
@@ -204,6 +209,7 @@ class VllmFishProxy:
                         "warning": warning,
                         "voice_similarity": voice_similarity,
                         "timing": timing,
+                        "speech_norm": speech.metrics(),
                         "loudness": loudness.metrics(),
                     },
                 )
@@ -385,7 +391,7 @@ class VllmFishProxy:
                     "sequence so they do not multiply GPU load. match_timing "
                     "(default true) fits the first speaker_wav slot: pause "
                     "budget first, then Praat PSOLA, limited to a plausible "
-                    "syllables-per-second rate and at most 1.3×, never slower. "
+                    "syllables-per-second rate and at most 1.25×, never slower. "
                     "A line that still overruns is logged as needs_shorter_line "
                     "rather than sped up further. Each chunk is retried up to "
                     f"{self.settings.synth_attempts} times if the raw take is "
@@ -395,9 +401,11 @@ class VllmFishProxy:
                     "lines). A take still below that floor after every attempt "
                     "is returned with X-Synth-Warning. X-Voice-Similarity is "
                     "the weakest chunk cosine. "
-                    "After timing, a single linear gain "
-                    "matches speech-gated BS.1770 loudness to the first "
-                    "speaker_wav. That step is always on and is not a request flag."
+                    "Right after synthesis, ffmpeg dynaudnorm evens ragged "
+                    "syllable loudness; timing runs on that take; a linear "
+                    "speech-gated LUFS gain then matches the first speaker_wav "
+                    "(ffmpeg loudnorm is not used — short lines make I unstable "
+                    "and it would recompress what dynaudnorm just evened). "
                 ),
             },
         }

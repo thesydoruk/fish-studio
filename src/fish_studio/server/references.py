@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import re
-import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
+
+from fish_studio.ffmpeg import run_ffmpeg
 
 from fish_studio.config import StressConfig
 from fish_studio.loudness import scale_to_speech_lufs, speech_lufs
@@ -121,20 +122,21 @@ def _decode_mono(path: Path, dest: Path, sample_rate: int) -> np.ndarray:
     """Decode one clip to mono at ``sample_rate`` via ffmpeg."""
     if not path.is_file():
         raise FileNotFoundError(f"reference clip not found: {path}")
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-i",
-        str(path),
-        "-ac",
-        "1",
-        "-ar",
-        str(sample_rate),
-        "-c:a",
-        "pcm_s16le",
-        str(dest),
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = run_ffmpeg(
+        [
+            "-y",
+            "-i",
+            str(path),
+            "-ac",
+            "1",
+            "-ar",
+            str(sample_rate),
+            "-c:a",
+            "pcm_s16le",
+            str(dest),
+        ],
+        text=True,
+    )
     if result.returncode != 0:
         raise RuntimeError(f"ffmpeg failed for {path.name}: {result.stderr[-500:]}")
     audio, rate = sf.read(str(dest), dtype="float32", always_2d=False)

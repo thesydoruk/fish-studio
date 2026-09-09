@@ -84,8 +84,8 @@ Tempo is compared as **syllables per second of active speech**, each side
 against its own text — raw seconds are meaningless across languages, since a
 Ukrainian line carries more syllables than the English original and matching
 absolute speech duration would compress it to an impossible rate. The slot says
-how much speed-up is wanted, the band 4–6 syl/s says how much is allowed, and
-Tempo stretch only speeds up, never slows down, and stops at 1.3×. A take that
+how much speed-up is wanted, the band 4–5.6 syl/s says how much is allowed, and
+Tempo stretch only speeds up, never slows down, and stops at 1.25×. A take that
 drags is sped up to the band floor even when the slot has room — unless the
 original is itself unhurried, in which case the floor yields and the delivery
 is left alone.
@@ -95,11 +95,13 @@ Whatever still does not fit stays unfit: `request.json` carries a `timing` block
 `needs_shorter_line` — the signal that the translation, not the audio, is too
 long for that slot.
 
-After timing, the take is scaled to the first reference's speech loudness
-(ITU-R BS.1770 K-weighting, gated on active-speech windows). One linear gain,
-no compressor or limiter; if that gain would clip, it is reduced so the peak
-stays under −0.1 dBFS. This is always applied and is not a request field.
-Metrics land in ``request.json`` under ``loudness``.
+Right after synthesis, the take goes through ffmpeg ``dynaudnorm`` so ragged
+syllable loudness is evened *before* pause detection and tempo. After timing,
+a single speech-gated LUFS gain matches the first ``speaker_wav`` — the same
+linear match as before. ffmpeg ``loudnorm`` is not used here: a 1–6 s line
+makes integrated ``I`` unstable, and dual-pass would recompress the range
+``dynaudnorm`` just evened. Metrics land in ``request.json`` under
+``speech_norm`` and ``loudness``.
 
 ### Example
 

@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import random
 import re
-import subprocess
 import wave
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
@@ -20,6 +19,7 @@ from typing import Any, Iterator
 
 from fish_studio.config import ExportConfig, SegmentationConfig
 from fish_studio.dataset.audio_normalize import ffmpeg_output_args
+from fish_studio.ffmpeg import run_ffmpeg, run_ffprobe
 
 TEXT_FIELDS = ("transcription", "text", "sentence")
 
@@ -123,9 +123,8 @@ def _audio_bytes(row: dict[str, Any]) -> bytes | None:
 
 def probe_audio(data: bytes) -> tuple[int | None, float | None]:
     """Return ``(sample_rate, duration_sec)`` of an encoded audio blob."""
-    proc = subprocess.run(
+    proc = run_ffprobe(
         [
-            "ffprobe",
             "-v",
             "error",
             "-select_streams",
@@ -137,8 +136,6 @@ def probe_audio(data: bytes) -> tuple[int | None, float | None]:
             "pipe:0",
         ],
         input=data,
-        capture_output=True,
-        check=False,
     )
     if proc.returncode != 0:
         return None, None
@@ -154,8 +151,10 @@ def probe_audio(data: bytes) -> tuple[int | None, float | None]:
 
 
 def _write_wav(data: bytes, dest: Path, segmentation: SegmentationConfig) -> bool:
-    cmd = ["ffmpeg", "-y", "-i", "pipe:0", *ffmpeg_output_args(segmentation), str(dest)]
-    proc = subprocess.run(cmd, input=data, capture_output=True, check=False)
+    proc = run_ffmpeg(
+        ["-y", "-i", "pipe:0", *ffmpeg_output_args(segmentation), str(dest)],
+        input=data,
+    )
     return proc.returncode == 0 and dest.is_file()
 
 
@@ -444,18 +443,19 @@ def _create_reference(
         src = wavs_dir / f"{record.file_id}.wav"
         if not src.is_file():
             continue
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-i",
-            str(src),
-            "-ac",
-            "1",
-            "-ar",
-            str(export.reference_sample_rate),
-            "-c:a",
-            "pcm_s16le",
-            str(output_dir / "reference.wav"),
-        ]
-        if subprocess.run(cmd, capture_output=True, check=False).returncode == 0:
+        proc = run_ffmpeg(
+            [
+                "-y",
+                "-i",
+                str(src),
+                "-ac",
+                "1",
+                "-ar",
+                str(export.reference_sample_rate),
+                "-c:a",
+                "pcm_s16le",
+                str(output_dir / "reference.wav"),
+            ]
+        )
+        if proc.returncode == 0:
             return

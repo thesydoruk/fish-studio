@@ -31,14 +31,14 @@ _WINDOW_MS = 50.0
 _SPEECH_FLOOR_RATIO = 0.1
 # Pause detection uses a lower floor: unvoiced fricatives (ш/с/х/ф) sit well
 # below 10% of the peak window and must not be classified as silence.
-_PAUSE_FLOOR_RATIO = 0.05
+_PAUSE_FLOOR_RATIO = 0.03
 # Never edit audio closer than this to speech on either side of a pause —
 # fricative onsets/tails leak past the RMS boundary by up to ~100 ms.
 _PAUSE_GUARD_SEC = 0.10
 _PEAK_EPS = 1.0 / 32_768
-_EDGE_KEEP_MS = 120.0
-_TAIL_KEEP_MS = 150.0
-_TAIL_FLOOR_RATIO = 0.05
+_EDGE_KEEP_MS = 160.0
+_TAIL_KEEP_MS = 220.0
+_TAIL_FLOOR_RATIO = 0.03
 _EPS_REL = 0.05
 _EPS_ABS_SEC = 0.35
 _MIN_LINE_SEC = 1.2
@@ -53,22 +53,22 @@ _RATE_MAX = 2.0
 # Plausible Ukrainian articulation, syllables per second of active speech.
 # Slot pressure may push toward the top of this band, never past it.
 _SYL_RATE_MIN = 4.0
-_SYL_RATE_MAX = 6.0
+_SYL_RATE_MAX = 5.6
 # The band edges follow a reference that sits outside them; an original at
 # 6.2 syl/s licenses a dub a little above the nominal ceiling.
 _REF_RATE_HEADROOM = 1.1
 # Tempo never slows a take (PSOLA below 1× smears pitch). Speed-up is
-# capped at 1.3× — Praat can do 2×, but that reads as rushed on dubbed lines.
+# capped at 1.25× — Praat can do 2×, but that reads as rushed on dubbed lines.
 _TEMPO_RATE_MIN = 1.0
-_TEMPO_RATE_MAX = 1.3
+_TEMPO_RATE_MAX = 1.25
 _PRAAT_F0_MIN = 60.0
 _PRAAT_F0_MAX = 600.0
 # Default per-pause ceiling; raised to the reference's longest phrase pause.
 _MAX_PAUSE_SEC = 0.40
-# Clause-level gaps only (~150–200 ms). Word-to-word dips are ~50–80 ms.
-_MIN_PHRASE_PAUSE_SEC = 0.15
+# Clause-level gaps only. Word-to-word dips are ~50–80 ms and must stay put.
+_MIN_PHRASE_PAUSE_SEC = 0.18
 # Pauses at or above this may shrink; shorter word gaps stay put.
-_MIN_KEEP_PAUSE_SEC = 0.10
+_MIN_KEEP_PAUSE_SEC = 0.12
 # Never shrink a pause below this — a clipped clause gap sounds like a cut.
 _MIN_SHRINK_PAUSE_SEC = 0.08
 _PAD_FRONT = 0.30
@@ -348,7 +348,7 @@ def _tempo_rate(
     """Stretch factor the slot wants, clamped to a plausible articulation rate.
 
     The slot decides how much speed-up is *wanted*; the syllable band decides how
-    much is *allowed*. Speed-up itself stops at 1.3×. A take is never slowed:
+    much is *allowed*. Speed-up itself stops at 1.25×. A take is never slowed:
     PSOLA below 1× smears pitch more than it helps the slot. Both band edges
     yield to the reference: a deliberately unhurried delivery must not be
     pushed to conversational speed, and a brisk original licenses a brisk dub.
@@ -510,7 +510,7 @@ def _insert_into_pauses(
             post = post.copy()
             post[:ramp_n] *= ramp[::-1]
         pieces.append(pre)
-        pieces.append(np.zeros(insert, dtype=samples.dtype))
+        pieces.append(_room_tone(samples, lo, hi, insert))
         pieces.append(post)
         cursor = end
     pieces.append(samples[cursor:])
@@ -570,6 +570,17 @@ def _pause_core(start: int, end: int, sample_rate: int) -> tuple[int, int]:
         mid = (start + end) // 2
         return mid, mid + 1
     return lo, hi
+
+
+def _room_tone(samples: np.ndarray, lo: int, hi: int, n: int) -> np.ndarray:
+    """Fill an expanded pause with the existing gap, not digital zeros."""
+    if n <= 0:
+        return np.zeros(0, dtype=samples.dtype)
+    core = samples[lo:hi]
+    if core.size <= 0:
+        return np.zeros(n, dtype=samples.dtype)
+    reps = int(math.ceil(n / core.size))
+    return np.tile(core, reps)[:n].astype(samples.dtype, copy=False)
 
 
 def _quietest_point(

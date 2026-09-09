@@ -24,7 +24,7 @@ _MIN_SYL = 4
 _MIN_CHARS = 12
 # Below this, a scored line is empty / a click, not speech.
 _SILENCE_ACTIVE_SEC = 0.25
-# 6 syl/s is the timing band ceiling; 1.3× stretch is ~7.8. 10 is past any
+# 5.6 syl/s is the timing band ceiling; 1.25× stretch is ~7.0. 10 is past any
 # plausible raw take and still below a half-spoken line at a normal rate.
 _CUTOFF_SYL_PER_SEC = 10.0
 _PEAK_EPS = 1.0 / 32_768

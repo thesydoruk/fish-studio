@@ -236,7 +236,7 @@ class YouTubeDownloader:
                 "--audio-quality",
                 "0",
                 "--postprocessor-args",
-                "ffmpeg:-ar 48000 -ac 1",
+                "ffmpeg:-nostdin -threads 1 -ar 48000 -ac 1",
                 "-o",
                 out_template,
                 "--no-overwrites",

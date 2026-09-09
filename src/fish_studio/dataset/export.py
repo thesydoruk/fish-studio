@@ -5,13 +5,13 @@ from __future__ import annotations
 import json
 import random
 import shutil
-import subprocess
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
 from fish_studio.config import ExportConfig, StressConfig
 from fish_studio.dataset.segment import AudioClip
+from fish_studio.ffmpeg import run_ffmpeg
 from fish_studio.stress import stressify
 
 
@@ -258,20 +258,21 @@ class DatasetExporter:
             return None
 
         ref_path.parent.mkdir(parents=True, exist_ok=True)
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-i",
-            str(src),
-            "-ac",
-            "1",
-            "-ar",
-            str(self.config.reference_sample_rate),
-            "-c:a",
-            "pcm_s16le",
-            str(ref_path),
-        ]
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        proc = run_ffmpeg(
+            [
+                "-y",
+                "-i",
+                str(src),
+                "-ac",
+                "1",
+                "-ar",
+                str(self.config.reference_sample_rate),
+                "-c:a",
+                "pcm_s16le",
+                str(ref_path),
+            ],
+            text=True,
+        )
         if proc.returncode != 0:
             return None
         return str(ref_path)

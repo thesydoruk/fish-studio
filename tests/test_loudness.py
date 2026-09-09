@@ -48,6 +48,10 @@ def test_gain_does_not_clip() -> None:
 
     assert float(np.max(np.abs(fit.audio))) <= 10 ** (-0.1 / 20.0) + 1e-6
     assert fit.peak_limited is True
+    # Speech LUFS gain, not the 0.95 click (that path used to yield ~1.04×).
+    assert fit.gain > 5.0
+    assert fit.lufs_after is not None and fit.lufs_reference is not None
+    assert abs(fit.lufs_after - fit.lufs_reference) < 0.6
 
 
 def test_silence_is_left_alone() -> None:

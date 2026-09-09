@@ -2,8 +2,9 @@
 
 After timing, the take is scaled so speech-gated K-weighted loudness
 (ITU-R BS.1770) matches the first reference. That is one multiply — no
-compressor, limiter, or EQ — so the waveform is not coloured. Gain is
-capped so the peak stays under −0.1 dBFS instead of clipping.
+compressor or EQ — so the waveform is not coloured. A leftover peak above
+−0.1 dBFS is clipped instead of lowering the whole line (a click must not
+starve speech gain).
 """
 
 from __future__ import annotations
@@ -79,13 +80,7 @@ def match_loudness_to_reference(
         )
 
     gain = 10 ** ((lufs_ref - lufs_before) / 20.0)
-    peak = float(np.max(np.abs(audio))) if audio.size else 0.0
-    peak_limited = False
-    if peak > _PEAK_EPS and peak * gain > _PEAK_CEILING:
-        gain = _PEAK_CEILING / peak
-        peak_limited = True
-
-    scaled = (audio.astype(np.float64) * gain).astype(np.float32)
+    scaled, peak_limited = _apply_gain(audio, gain)
     lufs_after = _speech_lufs(scaled, sample_rate)
     return LoudnessFit(
         audio=scaled,
@@ -114,10 +109,18 @@ def scale_to_speech_lufs(
     if lufs is None:
         return audio
     gain = 10 ** ((target_lufs - lufs) / 20.0)
-    peak = float(np.max(np.abs(audio))) if audio.size else 0.0
-    if peak > _PEAK_EPS and peak * gain > _PEAK_CEILING:
-        gain = _PEAK_CEILING / peak
-    return (audio.astype(np.float64) * gain).astype(np.float32)
+    scaled, _peak_limited = _apply_gain(audio, gain)
+    return scaled
+
+
+def _apply_gain(audio: np.ndarray, gain: float) -> tuple[np.ndarray, bool]:
+    """Apply ``gain``; clip leftover samples to the ceiling instead of starving LUFS."""
+    scaled = audio.astype(np.float64) * gain
+    peak = float(np.max(np.abs(scaled))) if scaled.size else 0.0
+    if peak <= _PEAK_CEILING:
+        return scaled.astype(np.float32), False
+    np.clip(scaled, -_PEAK_CEILING, _PEAK_CEILING, out=scaled)
+    return scaled.astype(np.float32), True
 
 
 def _speech_lufs(samples: np.ndarray, sample_rate: int) -> float | None:

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from fish_studio.config import QualityConfig, SegmentationConfig
 from fish_studio.dataset.audio_normalize import ffmpeg_output_args
+from fish_studio.ffmpeg import run_ffmpeg
 from fish_studio.dataset.audio_quality import (
     analyze_segment_volume,
     avg_word_score,
@@ -185,23 +185,24 @@ class AudioSegmenter:
 
         start = max(0.0, clip.start - self.config.padding_sec)
         end = clip.end + self.config.padding_sec
-        cmd = [
-            "ffmpeg",
-            "-y",
-            # Input seek: place -ss/-to before -i so ffmpeg does not decode the whole file.
-            "-ss",
-            f"{start:.3f}",
-            "-to",
-            f"{end:.3f}",
-            "-i",
-            clip.source_audio,
-            # No silence trim here: the span is already cut to aligned word boundaries
-            # (measured edge silence is a median of 0 s), and the trim filter cannot
-            # terminate on a seeked input.
-            *ffmpeg_output_args(self.config, trim_silence=False),
-            str(out_path),
-        ]
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        proc = run_ffmpeg(
+            [
+                "-y",
+                # Input seek: place -ss/-to before -i so ffmpeg does not decode the whole file.
+                "-ss",
+                f"{start:.3f}",
+                "-to",
+                f"{end:.3f}",
+                "-i",
+                clip.source_audio,
+                # No silence trim here: the span is already cut to aligned word boundaries
+                # (measured edge silence is a median of 0 s), and the trim filter cannot
+                # terminate on a seeked input.
+                *ffmpeg_output_args(self.config, trim_silence=False),
+                str(out_path),
+            ],
+            text=True,
+        )
         if proc.returncode != 0:
             raise RuntimeError(f"ffmpeg failed for {clip.clip_id}:\n{proc.stderr}")
         return out_path

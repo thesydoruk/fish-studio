@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from fish_studio.dataset.stats import TranscriptStats
+from fish_studio.ffmpeg import run_ffprobe
 
 
 @dataclass
@@ -78,17 +78,18 @@ class TranscriptResult:
 
 
 def probe_duration(audio_path: Path) -> float:
-    cmd = [
-        "ffprobe",
-        "-v",
-        "error",
-        "-show_entries",
-        "format=duration",
-        "-of",
-        "default=noprint_wrappers=1:nokey=1",
-        str(audio_path),
-    ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    proc = run_ffprobe(
+        [
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(audio_path),
+        ],
+        text=True,
+    )
     if proc.returncode != 0:
         return 0.0
     try:

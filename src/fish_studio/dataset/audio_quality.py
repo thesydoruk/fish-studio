@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import re
-import subprocess
 from dataclasses import dataclass
 
 from fish_studio.config import QualityConfig
 from fish_studio.dataset.transcript import TranscriptSegment, TranscriptWord
+from fish_studio.ffmpeg import run_ffmpeg
 
 
 @dataclass
@@ -66,23 +66,23 @@ def analyze_segment_volume(
     """Run ffmpeg ``volumedetect`` on the same padded span that will be exported."""
     start_at = max(0.0, start - padding_sec)
     end_at = end + padding_sec
-    cmd = [
-        "ffmpeg",
-        "-hide_banner",
-        "-nostats",
-        "-ss",
-        f"{start_at:.3f}",
-        "-to",
-        f"{end_at:.3f}",
-        "-i",
-        source_audio,
-        "-af",
-        "volumedetect",
-        "-f",
-        "null",
-        "-",
-    ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    proc = run_ffmpeg(
+        [
+            "-nostats",
+            "-ss",
+            f"{start_at:.3f}",
+            "-to",
+            f"{end_at:.3f}",
+            "-i",
+            source_audio,
+            "-af",
+            "volumedetect",
+            "-f",
+            "null",
+            "-",
+        ],
+        text=True,
+    )
     output = proc.stderr
     mean_match = re.search(r"mean_volume:\s(-?\d+(?:\.\d+)?)\s*dB", output)
     max_match = re.search(r"max_volume:\s(-?\d+(?:\.\d+)?)\s*dB", output)

@@ -306,15 +306,15 @@ def test_export_writes_per_clip_speakers(tmp_path: Path, monkeypatch) -> None:
     (segments / "v1_0000.wav").write_bytes(b"RIFF")
     (segments / "v1_0001.wav").write_bytes(b"RIFF")
 
-    def fake_ffmpeg(cmd, capture_output=True, text=True, check=False):  # noqa: ANN001
-        Path(cmd[-1]).write_bytes(b"RIFF")
+    def fake_ffmpeg(args, input=None, text=False, check=False):  # noqa: ANN001
+        Path(args[-1]).write_bytes(b"RIFF")
 
         class _Proc:
             returncode = 0
 
         return _Proc()
 
-    monkeypatch.setattr("fish_studio.dataset.export.subprocess.run", fake_ffmpeg)
+    monkeypatch.setattr("fish_studio.dataset.export.run_ffmpeg", fake_ffmpeg)
 
     clips = [
         AudioClip(
