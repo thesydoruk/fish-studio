@@ -110,6 +110,23 @@ _HOMONYM_ACCENT_BY_FEATS: dict[str, tuple[tuple[tuple[str, ...], int], ...]] = {
     # наси́пати (pf) / насипа́ти (ipf) share the same Inf tags. Stanza also
     # tags почали насипати as Perf, so Aspect cannot separate them.
     "насипати": ((("VerbForm=Inf",), 6),),  # насипа́ти
+    "поводилися": ((("Number=Plur",), 4),),  # пово́дилися (behave)
+    "поводились": ((("Number=Plur",), 4),),
+    # стрільби́ (gen of стрільба́) vs стрі́льби (pl. shooting drills).
+    "стрільби": (
+        (("Case=Gen", "Number=Sing"), 8),
+        (("Number=Plur",), 4),
+    ),
+    "помилки": (
+        (("Number=Plur",), 7),  # помилки́
+        (("Case=Gen", "Number=Sing"), 4),  # поми́лки
+    ),
+    "вислухати": ((("VerbForm=Inf",), 2),),  # ви́слухати
+    "вислухали": ((("Number=Plur",), 2),),  # ви́слухали
+    "вислухав": ((("Number=Sing",), 2),),
+    "вислухала": ((("Number=Sing",), 2),),
+    "вислухай": ((("Mood=Imp",), 2),),
+    "вислухайте": ((("Mood=Imp",), 2),),
     "послухати": ((("VerbForm=Inf",), 5),),  # послу́хати
     "послухай": ((("Mood=Imp",), 5),),  # послу́хай
     "послухайте": ((("Mood=Imp",), 5),),  # послу́хайте
@@ -117,6 +134,33 @@ _HOMONYM_ACCENT_BY_FEATS: dict[str, tuple[tuple[tuple[str, ...], int], ...]] = {
     "руці": ((("Case=Dat",), 4), (("Case=Loc",), 4)),  # руці́
     "спокої": ((("Case=Loc",), 3),),  # спо́кої
     "сорок": ((("upos=NUM",), 2),),  # со́рок
+    "саме": (
+        (("upos=ADV",), 2),  # са́ме «що саме»
+        (("upos=PART",), 2),
+    ),
+    "батьків": (
+        (("upos=NOUN",), 6),  # батькі́в
+        (("upos=ADJ",), 2),  # ба́тьків
+    ),
+    "коли": (
+        (("upos=ADV",), 4),  # коли́
+        (("upos=CCONJ",), 4),
+        (("upos=SCONJ",), 4),
+    ),
+    "яка": (
+        (("upos=PRON",), 3),  # яка́
+        (("upos=DET",), 3),
+        (("upos=NOUN",), 1),  # я́ка, gen/acc of як the animal
+    ),
+    "яку": (
+        (("upos=PRON",), 3),  # яку́
+        (("upos=DET",), 3),
+        (("upos=NOUN",), 1),  # я́ку, dat/loc of як
+    ),
+    "зірки": (
+        (("Number=Plur",), 5),  # зірки́
+        (("Case=Gen", "Number=Sing"), 2),  # зі́рки
+    ),
 }
 
 
@@ -286,7 +330,8 @@ def _preferred_homonym_accent(parse: dict) -> int | None:
 
 
 def _install_homonym_disambiguation() -> None:
-    """If Stanza matched tags but skip left the word bare, pick that reading."""
+    """Prefer the Stanza-tagged reading even if skip or a unique dict match
+    already picked the other accent (e.g. genderless past-plural rows)."""
     global _homonym_patch_installed
     if _homonym_patch_installed:
         return
@@ -298,16 +343,12 @@ def _install_homonym_disambiguation() -> None:
     mark_all = getattr(stressify_mod.OnAmbiguity, "All", "all")
 
     def _accent_positions_from_values(values, parse, on_ambiguity=skip):
-        accents = original(values, parse, on_ambiguity)
-        if accents:
-            return accents
         preferred = _preferred_homonym_accent(parse)
-        if preferred is None:
-            return accents
-        all_accents = original(values, parse, mark_all)
-        if preferred in all_accents:
-            return [preferred]
-        return accents
+        if preferred is not None:
+            all_accents = original(values, parse, mark_all)
+            if preferred in all_accents:
+                return [preferred]
+        return original(values, parse, on_ambiguity)
 
     stressify_mod._accent_positions_from_values = _accent_positions_from_values
     _homonym_patch_installed = True

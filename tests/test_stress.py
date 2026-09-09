@@ -210,9 +210,29 @@ def test_stanza_marks_dating_zviazkamy_on_the_ending() -> None:
     assert f"зв'я{COMBINING_ACUTE}зками" not in marked
 
 
+def test_stanza_marks_exclamatory_yaka_on_the_ending() -> None:
+    stanza = pytest.importorskip("stanza")
+    try:
+        stanza.Pipeline(
+            "uk",
+            processors="tokenize,pos,mwt",
+            download_method=stanza.pipeline.core.DownloadMethod.REUSE_RESOURCES,
+        )
+    except Exception:
+        pytest.skip("Ukrainian Stanza models are not available")
+
+    marked = apply_stress_marks(
+        "Яка жахлива людина може таке сказати?",
+        disambiguation="stanza",
+        lexicon={},
+    )
+    assert f"Яка{COMBINING_ACUTE}" in marked
+    assert f"Я{COMBINING_ACUTE}ка" not in marked
+
+
 def test_lexicon_file_marks_unambiguous_words() -> None:
     marked = stressify(
-        "Ральф сказав йому про Емоджин. Стіна стоїть на заході. Не хочу бути стукачем. Все скінчено. Почали насипати. Активуйте їх. Болотники поводилися тихо.",
+        "Ральф сказав йому про Емоджин. Стіна стоїть на заході. Не хочу бути стукачем. Все скінчено. Активуйте їх. Система має працювати. Я рятував усіх. Відтоді я присягнув.",
         StressConfig(enabled=True, lexicon_path=str(_LEXICON), disambiguation="dictionary"),
     )
     assert f"Ра{COMBINING_ACUTE}льф" in marked
@@ -222,19 +242,47 @@ def test_lexicon_file_marks_unambiguous_words() -> None:
     assert f"за{COMBINING_ACUTE}ході" in marked
     assert f"стукаче{COMBINING_ACUTE}м" in marked
     assert f"скі{COMBINING_ACUTE}нчено" in marked
-    assert f"насипа{COMBINING_ACUTE}ти" in marked
     assert f"Активу{COMBINING_ACUTE}йте" in marked
-    assert f"пово{COMBINING_ACUTE}дилися" in marked
+    assert f"працюва{COMBINING_ACUTE}ти" in marked
+    assert f"рятува{COMBINING_ACUTE}в" in marked
+    assert f"Відто{COMBINING_ACUTE}ді" in marked
 
 
 def test_lexicon_overrides_skincheno_even_when_sentence_already_marked() -> None:
     lexicon = _load_lexicon(str(_LEXICON))
-    already = f"Все{COMBINING_ACUTE} скінчено, не буду стукачем. Активуйте їх. Вони поводилися тихо."
+    already = f"Все{COMBINING_ACUTE} скінчено, не буду стукачем. Активуйте їх. Має працювати. Я рятував. Відтоді."
     marked = apply_lexicon(already, lexicon)
     assert f"скі{COMBINING_ACUTE}нчено" in marked
     assert f"стукаче{COMBINING_ACUTE}м" in marked
     assert f"Активу{COMBINING_ACUTE}йте" in marked
-    assert f"пово{COMBINING_ACUTE}дилися" in marked
+    assert f"працюва{COMBINING_ACUTE}ти" in marked
+    assert f"рятува{COMBINING_ACUTE}в" in marked
+    assert f"Відто{COMBINING_ACUTE}ді" in marked
+
+
+def test_lexicon_marks_tata_zhyvi_koly_zseredyny() -> None:
+    marked = stressify(
+        "Пошукати маму і тата. Вони живі. Зсередини немає ручки. Витягніть мене.",
+        StressConfig(enabled=True, lexicon_path=str(_LEXICON), disambiguation="dictionary"),
+    )
+    assert f"та{COMBINING_ACUTE}та" in marked
+    assert f"живі{COMBINING_ACUTE}" in marked
+    assert f"Зсере{COMBINING_ACUTE}дини" in marked
+    assert f"Ви{COMBINING_ACUTE}тягніть" in marked
+
+
+def test_lexicon_marks_pokydok_vidstrilyty_and_swears() -> None:
+    marked = stressify(
+        "Покидьок. Вам доведеться їх відстрілити. Нахуй і пиздець. Манда і ссикло. Ссикуняка.",
+        StressConfig(enabled=True, lexicon_path=str(_LEXICON), disambiguation="dictionary"),
+    )
+    assert f"По{COMBINING_ACUTE}кидьок" in marked
+    assert f"відстріли{COMBINING_ACUTE}ти" in marked
+    assert f"Наху{COMBINING_ACUTE}й" in marked
+    assert f"пизде{COMBINING_ACUTE}ць" in marked
+    assert f"Манда{COMBINING_ACUTE}" in marked
+    assert f"ссикло{COMBINING_ACUTE}" in marked
+    assert f"Ссикуня{COMBINING_ACUTE}ка" in marked
 
 
 def test_hyphen_stem_lexicon_marks_second_part() -> None:
@@ -267,6 +315,105 @@ def test_ambiguous_former_lexicon_words_are_not_forced() -> None:
     assert "гуля" in marked
     assert f"то{COMBINING_ACUTE}ма" not in marked
     assert f"будь-кого{COMBINING_ACUTE}" not in marked
+
+
+def test_strilby_genitive_prefers_the_ending() -> None:
+    parse = {
+        "text": "стрільби",
+        "upos": "NOUN",
+        "feats": "Animacy=Inan|Case=Gen|Gender=Fem|Number=Sing",
+    }
+    assert _preferred_homonym_accent(parse) == 8
+
+
+def test_strilby_plural_prefers_the_stem() -> None:
+    parse = {
+        "text": "стрільби",
+        "upos": "NOUN",
+        "feats": "Animacy=Inan|Case=Nom|Gender=Fem|Number=Plur",
+    }
+    assert _preferred_homonym_accent(parse) == 4
+
+
+def test_pomylky_plural_prefers_the_ending() -> None:
+    parse = {
+        "text": "помилки",
+        "upos": "NOUN",
+        "feats": "Animacy=Inan|Case=Acc|Gender=Fem|Number=Plur",
+    }
+    assert _preferred_homonym_accent(parse) == 7
+
+
+def test_yaka_pronoun_prefers_the_ending() -> None:
+    parse = {
+        "text": "яка",
+        "upos": "PRON",
+        "feats": "Case=Nom|Gender=Fem|Number=Sing",
+    }
+    assert _preferred_homonym_accent(parse) == 3
+
+
+def test_yaka_noun_yak_prefers_the_stem() -> None:
+    parse = {
+        "text": "яка",
+        "upos": "NOUN",
+        "feats": "Animacy=Anim|Case=Gen|Gender=Masc|Number=Sing",
+    }
+    assert _preferred_homonym_accent(parse) == 1
+
+
+def test_zirky_plural_prefers_the_ending() -> None:
+    parse = {
+        "text": "зірки",
+        "upos": "NOUN",
+        "feats": "Animacy=Inan|Case=Nom|Gender=Fem|Number=Plur",
+    }
+    assert _preferred_homonym_accent(parse) == 5
+
+
+def test_koly_conjunction_prefers_the_ending() -> None:
+    parse = {
+        "text": "коли",
+        "upos": "SCONJ",
+        "feats": "",
+    }
+    assert _preferred_homonym_accent(parse) == 4
+
+
+def test_batkiv_noun_prefers_the_ending() -> None:
+    parse = {
+        "text": "батьків",
+        "upos": "NOUN",
+        "feats": "Animacy=Anim|Case=Gen|Gender=Masc|Number=Plur",
+    }
+    assert _preferred_homonym_accent(parse) == 6
+
+
+def test_same_particle_prefers_the_first_vowel() -> None:
+    parse = {
+        "text": "саме",
+        "upos": "PART",
+        "feats": "",
+    }
+    assert _preferred_homonym_accent(parse) == 2
+
+
+def test_vyslukhaly_plural_prefers_the_prefix() -> None:
+    parse = {
+        "text": "вислухали",
+        "upos": "VERB",
+        "feats": "Aspect=Perf|Mood=Ind|Number=Plur|Tense=Past|VerbForm=Fin",
+    }
+    assert _preferred_homonym_accent(parse) == 2
+
+
+def test_povodylysya_plural_prefers_the_stem() -> None:
+    parse = {
+        "text": "поводилися",
+        "upos": "VERB",
+        "feats": "Aspect=Imp|Mood=Ind|Number=Plur|Tense=Past|VerbForm=Fin",
+    }
+    assert _preferred_homonym_accent(parse) == 4
 
 
 def test_nasypaty_infinitive_prefers_the_thematic_vowel() -> None:
