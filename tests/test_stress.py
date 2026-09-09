@@ -285,6 +285,17 @@ def test_lexicon_marks_pokydok_vidstrilyty_and_swears() -> None:
     assert f"Ссикуня{COMBINING_ACUTE}ка" in marked
 
 
+def test_lexicon_marks_napruzhenyi() -> None:
+    marked = stressify(
+        "Напружений день у вас, чи не так?",
+        StressConfig(enabled=True, lexicon_path=str(_LEXICON), disambiguation="dictionary"),
+    )
+    assert f"Напру{COMBINING_ACUTE}жений" in marked
+    lexicon = _load_lexicon(str(_LEXICON))
+    already = f"Напруже{COMBINING_ACUTE}ний день."
+    assert f"Напру{COMBINING_ACUTE}жений" in apply_lexicon(already, lexicon)
+
+
 def test_hyphen_stem_lexicon_marks_second_part() -> None:
     lexicon = _load_lexicon(str(_LEXICON))
     assert apply_lexicon(f"коли{COMBINING_ACUTE}-небудь", lexicon) == (
