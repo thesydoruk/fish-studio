@@ -162,8 +162,9 @@ for name in ("stanza", "ukrainian_word_stress", "parselmouth", "soundfile"):
 
 protobuf = version("protobuf")
 major, minor, *_rest = (int(part) for part in protobuf.split(".")[:3])
-if major != 4 or minor < 25:
-    raise SystemExit(f"protobuf must be 4.25.x after install, got {protobuf}")
+# Override wheel is protobuf>=4.25.3,<6 (currently 4.25 or 5.29).
+if major < 4 or major >= 6 or (major == 4 and minor < 25):
+    raise SystemExit(f"protobuf must be >=4.25.3,<6 after install, got {protobuf}")
 
 print(f"runtime_ok protobuf={protobuf} stanza={version('stanza')}")
 PY
