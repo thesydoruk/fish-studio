@@ -27,6 +27,16 @@ def test_declared_deps_do_not_pin_protobuf() -> None:
     assert "protobuf" not in names
 
 
+def test_server_install_keeps_stanza() -> None:
+    """Bare ``pip install -e .`` must still pull Stanza — the HTTP path needs it."""
+    extras_at = PYPROJECT.index("[project.optional-dependencies]")
+    core = PYPROJECT[PYPROJECT.index("dependencies = [") : extras_at]
+    assert '"stanza>=1.8"' in core
+    assert "stanza" not in _requirement_names(
+        PYPROJECT[extras_at : PYPROJECT.index("[tool.uv]", extras_at)]
+    )
+
+
 def test_extras_do_not_fight_fish_speech_pins() -> None:
     start = PYPROJECT.index("[project.optional-dependencies]")
     extras = PYPROJECT[start : PYPROJECT.index("[tool.uv]", start)]
@@ -50,3 +60,5 @@ def test_install_sh_overrides_protobuf_after_resolve() -> None:
     assert "protobuf>=4.25.3,<6" in INSTALL_SH
     assert "|| true" not in INSTALL_SH
     assert "setuptools>=68,<81" in INSTALL_SH
+    assert "verify_server_runtime" in INSTALL_SH
+    assert "ensure_stanza_uk" in INSTALL_SH

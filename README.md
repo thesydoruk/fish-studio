@@ -424,13 +424,10 @@ src/fish_studio/
 pytest
 ```
 
-Raw `pip install -e .` can resolve, but then you still need:
-
-```bash
-pip install --force-reinstall --no-deps 'protobuf>=4.25.3,<6'
-```
-
-`descript-audiotools` 0.7.2 pins `protobuf<3.20`; fish-speech protos need 4.x. Pip cannot satisfy both, so the override replaces the wheel after the graph resolves.
+Use ``./run.sh install …``, not bare ``pip install -e .``. The install script
+re-applies ``protobuf`` 4.x (audiotools wants 3.19; fish-speech protos need 4.x),
+installs Stanza (HTTP stress disambiguation), and checks the imports. A raw
+editable install drops those fixes and the server starts returning 500s.
 
 ## Configuration
 

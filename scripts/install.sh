@@ -142,6 +142,33 @@ force_protobuf_for_fish_speech() {
   pip install --force-reinstall --no-deps 'protobuf>=4.25.3,<6'
 }
 
+ensure_stanza_uk() {
+  # Heteronym pipeline; skip the download when the cache is already there.
+  python - <<'PY'
+import stanza
+
+stanza.download("uk", processors="tokenize,pos,mwt")
+print("stanza uk resources ready")
+PY
+}
+
+verify_server_runtime() {
+  python - <<'PY'
+from importlib import import_module
+from importlib.metadata import version
+
+for name in ("stanza", "ukrainian_word_stress", "parselmouth", "soundfile"):
+    import_module(name)
+
+protobuf = version("protobuf")
+major, minor, *_rest = (int(part) for part in protobuf.split(".")[:3])
+if major != 4 or minor < 25:
+    raise SystemExit(f"protobuf must be 4.25.x after install, got {protobuf}")
+
+print(f"runtime_ok protobuf={protobuf} stanza={version('stanza')}")
+PY
+}
+
 case "$TARGET" in
   server)
     pip install -e .
@@ -162,6 +189,8 @@ case "$TARGET" in
 esac
 
 force_protobuf_for_fish_speech
+ensure_stanza_uk
+verify_server_runtime
 
 if [[ "${SKIP_DOWNLOAD:-0}" != "1" ]]; then
   download_checkpoints

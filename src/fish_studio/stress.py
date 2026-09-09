@@ -240,7 +240,7 @@ def _install_cpu_stanza_pipeline() -> None:
         except ImportError as exc:  # pragma: no cover - import guard mirrored from upstream
             raise RuntimeError(
                 "Stanza is required for STRESS_DISAMBIGUATION=stanza. "
-                "Install it with: pip install stanza && python -c \"import stanza; stanza.download('uk')\""
+                "Install it with: ./run.sh install server"
             ) from exc
 
         try:
@@ -311,7 +311,7 @@ def _stressifier(on_ambiguity: str, disambiguation: str, prefer_cpu: bool):
     except ImportError as exc:  # pragma: no cover - depends on the install extras
         raise ImportError(
             "ukrainian-word-stress is required for stress marking. "
-            "Install it with: pip install -e '.[dataset]'"
+            "Install it with: ./run.sh install server"
         ) from exc
 
     if disambiguation == "stanza" and prefer_cpu:

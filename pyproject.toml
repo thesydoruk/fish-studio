@@ -34,6 +34,10 @@ dependencies = [
     # Stress marks are applied to training transcripts and to synthesis input alike,
     # so both the server and the dataset tooling need this.
     "ukrainian-word-stress>=2.1",
+    # Heteronym disambiguation (STRESS_DISAMBIGUATION=stanza). Must stay a
+    # core dep: bare `pip install -e .` on deploy dropped the dataset extra
+    # and every synthesize returned 500.
+    "stanza>=1.8",
     "praat-parselmouth>=0.4.3",
     # ECAPA clone gate (raw take vs speaker_wav). Lazy-imported; synth still
     # runs if the extra is missing, just without voice retries.
@@ -48,8 +52,6 @@ dataset = [
     "click>=8.1",
     "rich>=13.0",
     "tqdm>=4.66",
-    # Context-aware heteronym resolution for STRESS_DISAMBIGUATION=stanza
-    "stanza>=1.8",
 ]
 training = [
     # Stay inside fish-speech v2.0.0-beta's transformers<=4.57.3 pin.
