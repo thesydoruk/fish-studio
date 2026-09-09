@@ -9,6 +9,7 @@ import pytest
 from fish_studio.config import StressConfig
 from fish_studio.stress import (
     COMBINING_ACUTE,
+    _preferred_homonym_accent,
     apply_lexicon,
     apply_stress_marks,
     has_stress_marks,
@@ -109,6 +110,63 @@ def test_apply_lexicon_preserves_case() -> None:
     lexicon = {"ральф": f"ра{COMBINING_ACUTE}льф"}
     assert apply_lexicon("РАЛЬФ", lexicon) == f"РА{COMBINING_ACUTE}ЛЬФ"
     assert apply_lexicon("Ральф", lexicon) == f"Ра{COMBINING_ACUTE}льф"
+
+
+def test_zviazok_masc_locative_prefers_final_vowel() -> None:
+    parse = {
+        "text": "зв'язку",
+        "upos": "NOUN",
+        "feats": "Animacy=Inan|Case=Loc|Gender=Masc|Number=Sing",
+    }
+    assert _preferred_homonym_accent(parse) == 7
+
+
+def test_zviazka_fem_accusative_prefers_stem() -> None:
+    parse = {
+        "text": "зв'язку",
+        "upos": "NOUN",
+        "feats": "Animacy=Inan|Case=Acc|Gender=Fem|Number=Sing",
+    }
+    assert _preferred_homonym_accent(parse) == 4
+
+
+def test_zviazok_unrelated_parse_has_no_preference() -> None:
+    assert _preferred_homonym_accent({"text": "броня", "feats": "Gender=Fem"}) is None
+
+
+def test_stanza_marks_na_zviazku_on_the_ending() -> None:
+    stanza = pytest.importorskip("stanza")
+    try:
+        stanza.Pipeline(
+            "uk",
+            processors="tokenize,pos,mwt",
+            download_method=stanza.pipeline.core.DownloadMethod.REUSE_RESOURCES,
+        )
+    except Exception:
+        pytest.skip("Ukrainian Stanza models are not available")
+
+    marked = apply_stress_marks(
+        "Волт-Тек на зв'язку!",
+        disambiguation="stanza",
+        lexicon={},
+    )
+    assert f"зв'язку{COMBINING_ACUTE}" in marked
+    assert f"зв'я{COMBINING_ACUTE}зку" not in marked
+
+
+def test_stanza_keeps_zviazka_stress_on_the_stem() -> None:
+    stanza = pytest.importorskip("stanza")
+    try:
+        stanza.Pipeline(
+            "uk",
+            processors="tokenize,pos,mwt",
+            download_method=stanza.pipeline.core.DownloadMethod.REUSE_RESOURCES,
+        )
+    except Exception:
+        pytest.skip("Ukrainian Stanza models are not available")
+
+    marked = apply_stress_marks("зв'язка ключів", disambiguation="stanza", lexicon={})
+    assert f"зв'я{COMBINING_ACUTE}зка" in marked
 
 
 def test_apostrophe_fix_enables_dictionary_mark() -> None:

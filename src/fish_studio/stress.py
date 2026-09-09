@@ -80,6 +80,24 @@ _WORD_RE = re.compile(
 )
 
 _cpu_stanza_patched = False
+_homonym_patch_installed = False
+
+# Dictionary lists two stresses on the same POS tags for зв'язок (masc) vs
+# зв'язка (fem). Stanza already picks Gender/Case; skip then drops both
+# marks. Prefer the reading that belongs to that gender.
+# Values are insert-after indexes used by ukrainian_word_stress.
+_HOMONYM_ACCENT_BY_FEATS: dict[str, tuple[tuple[tuple[str, ...], int], ...]] = {
+    "зв'язок": ((("Gender=Masc",), 6),),  # зв'язо́к
+    "зв'язку": (
+        (("Gender=Masc",), 7),  # зв'язку́
+        (("Gender=Fem",), 4),  # зв'я́зку (acc of зв'язка)
+    ),
+    "зв'язком": ((("Gender=Masc",), 7),),  # зв'язко́м
+    "зв'язки": (
+        (("Gender=Masc",), 7),
+        (("Gender=Fem",), 4),
+    ),
+}
 
 
 def has_stress_marks(text: str) -> bool:
@@ -216,6 +234,49 @@ def _install_cpu_stanza_pipeline() -> None:
     _cpu_stanza_patched = True
 
 
+def _preferred_homonym_accent(parse: dict) -> int | None:
+    """Accent index for a gender-tagged homonym, or None if we cannot choose."""
+    word = _casefold_key(str(parse.get("text") or ""))
+    rules = _HOMONYM_ACCENT_BY_FEATS.get(word)
+    if not rules:
+        return None
+    feats = str(parse.get("feats") or "")
+    feat_list = [part for part in feats.split("|") if part]
+    feat_list.append(f"upos={parse.get('upos') or ''}")
+    for required, accent in rules:
+        if all(tag in feat_list for tag in required):
+            return accent
+    return None
+
+
+def _install_homonym_disambiguation() -> None:
+    """If Stanza matched tags but two stresses remain, pick the gender's reading."""
+    global _homonym_patch_installed
+    if _homonym_patch_installed:
+        return
+
+    import ukrainian_word_stress.stressify_ as stressify_mod
+
+    original = stressify_mod._accent_positions_from_values
+    skip = getattr(stressify_mod.OnAmbiguity, "Skip", "skip")
+    mark_all = getattr(stressify_mod.OnAmbiguity, "All", "all")
+
+    def _accent_positions_from_values(values, parse, on_ambiguity=skip):
+        accents = original(values, parse, on_ambiguity)
+        if accents:
+            return accents
+        preferred = _preferred_homonym_accent(parse)
+        if preferred is None:
+            return accents
+        all_accents = original(values, parse, mark_all)
+        if preferred in all_accents:
+            return [preferred]
+        return accents
+
+    stressify_mod._accent_positions_from_values = _accent_positions_from_values
+    _homonym_patch_installed = True
+
+
 @lru_cache(maxsize=8)
 def _stressifier(on_ambiguity: str, disambiguation: str, prefer_cpu: bool):
     try:
@@ -228,6 +289,7 @@ def _stressifier(on_ambiguity: str, disambiguation: str, prefer_cpu: bool):
 
     if disambiguation == "stanza" and prefer_cpu:
         _install_cpu_stanza_pipeline()
+    _install_homonym_disambiguation()
 
     return Stressifier(
         stress_symbol=StressSymbol.CombiningAcuteAccent,
