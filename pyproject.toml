@@ -35,6 +35,9 @@ dependencies = [
     # so both the server and the dataset tooling need this.
     "ukrainian-word-stress>=2.1",
     "praat-parselmouth>=0.4.3",
+    # ECAPA clone gate (raw take vs speaker_wav). Lazy-imported; synth still
+    # runs if the extra is missing, just without voice retries.
+    "speechbrain>=1.0.2,<2",
 ]
 
 [project.optional-dependencies]

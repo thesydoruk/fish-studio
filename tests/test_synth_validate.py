@@ -10,10 +10,13 @@ from fish_studio.server.app import synthesis_response_headers
 from fish_studio.server.synth_validate import (
     MAX_SYNTH_ATTEMPTS,
     SYNTH_WARNING_HEADER,
+    attach_voice,
     judge_raw_synth,
+    line_voice_similarity,
     pick_best_attempt,
     quality_warning,
 )
+from fish_studio.server.voiceprint import VOICE_SIMILARITY_HEADER
 from fish_studio.synthesis import SynthesisResult
 from fish_studio.server.vllm_proxy import VllmFishProxy, _encode_wav
 from fish_studio.timing import count_syllables
@@ -221,6 +224,118 @@ def test_response_headers_omit_warning_when_clean() -> None:
         SynthesisResult(wav_bytes=b"RIFF", sample_rate=16000, language="uk")
     )
     assert SYNTH_WARNING_HEADER not in headers
+    assert VOICE_SIMILARITY_HEADER not in headers
+
+
+def test_response_headers_include_voice_similarity() -> None:
+    headers = synthesis_response_headers(
+        SynthesisResult(
+            wav_bytes=b"RIFF",
+            sample_rate=16000,
+            language="uk",
+            voice_similarity=0.312,
+        )
+    )
+    assert headers[VOICE_SIMILARITY_HEADER] == "0.312"
+
+
+def test_attach_voice_retries_below_floor() -> None:
+    check = judge_raw_synth(_tone(3.0), SAMPLE_RATE, LINE)
+    assert check.ok is True
+    tagged = attach_voice(check, 0.18)
+    assert tagged.ok is False
+    assert tagged.reason == "voice"
+    assert tagged.voice_similarity == 0.18
+
+
+def test_attach_voice_keeps_pass_at_floor() -> None:
+    check = judge_raw_synth(_tone(3.0), SAMPLE_RATE, LINE)
+    tagged = attach_voice(check, 0.25)
+    assert tagged.ok is True
+    assert tagged.reason == ""
+    assert tagged.voice_similarity == 0.25
+
+
+def test_short_line_is_voice_scored() -> None:
+    check = attach_voice(judge_raw_synth(_tone(0.6), SAMPLE_RATE, "Так."), 0.11)
+    assert check.ok is False
+    assert check.reason == "voice"
+
+
+def test_attach_voice_does_not_hide_silence() -> None:
+    check = attach_voice(judge_raw_synth(_silence(2.0), SAMPLE_RATE, LINE), 0.05)
+    assert check.ok is False
+    assert check.reason == "silence"
+    assert check.voice_similarity == 0.05
+
+
+def test_pick_best_prefers_higher_clone_match() -> None:
+    weak = attach_voice(judge_raw_synth(_tone(3.0), SAMPLE_RATE, LINE), 0.19)
+    stronger = attach_voice(judge_raw_synth(_tone(3.0), SAMPLE_RATE, LINE), 0.22)
+    audio, _, check = pick_best_attempt(
+        [
+            (_tone(3.0), SAMPLE_RATE, weak),
+            (_tone(3.1), SAMPLE_RATE, stronger),
+        ]
+    )
+    assert check.voice_similarity == 0.22
+    assert audio.size == _tone(3.1).size
+
+
+def test_quality_warning_describes_voice() -> None:
+    text = quality_warning(
+        [
+            {
+                "ok": False,
+                "reason": "voice",
+                "attempts": 3,
+                "voice_similarity": 0.18,
+            }
+        ]
+    )
+    assert text == "voice after 3 attempts (similarity 0.18)"
+
+
+def test_quality_warning_weak_but_accepted() -> None:
+    text = quality_warning(
+        [{"ok": True, "reason": "", "voice_similarity": 0.27, "attempts": 1}]
+    )
+    assert text == "weak voice (0.27)"
+
+
+def test_line_voice_similarity_is_the_weakest_chunk() -> None:
+    assert line_voice_similarity(
+        [{"voice_similarity": 0.41}, {"voice_similarity": 0.29}]
+    ) == pytest.approx(0.29)
+
+
+def test_chunk_retries_voice_then_recovers(monkeypatch) -> None:
+    proxy = _proxy()
+    waves = [_encode_wav(_tone(3.0), SAMPLE_RATE), _encode_wav(_tone(3.1), SAMPLE_RATE)]
+    scores = [0.12, 0.41]
+
+    def _fake_speech(*_args, **_kwargs) -> bytes:
+        return waves.pop(0)
+
+    def _fake_sim(*_args, **_kwargs) -> float:
+        return scores.pop(0)
+
+    monkeypatch.setattr(proxy, "_request_speech", _fake_speech)
+    monkeypatch.setattr(proxy._voice, "similarity", _fake_sim)
+    audio, _, report = proxy._synthesize_chunk_validated(
+        client=None,  # type: ignore[arg-type]
+        chunk=LINE,
+        mime="audio/wav",
+        ref_b64="",
+        reference_text="",
+        ref_embedding=[1.0],
+    )
+    assert report["ok"] is True
+    assert report["recovered"] is True
+    assert report["attempts"] == 2
+    assert report["voice_similarity"] == pytest.approx(0.41)
+    assert audio.size == _tone(3.1).size
+    assert scores == []
 
 
 def test_chunk_keeps_best_after_all_fail(monkeypatch) -> None:

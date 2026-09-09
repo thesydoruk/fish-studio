@@ -22,6 +22,7 @@ from fish_studio.server.references import (
 )
 from fish_studio.server.settings import ServerSettings
 from fish_studio.server.synth_validate import SYNTH_WARNING_HEADER
+from fish_studio.server.voiceprint import VOICE_SIMILARITY_HEADER
 from fish_studio.synthesis import SynthesisResult
 
 
@@ -62,6 +63,8 @@ def synthesis_response_headers(result: SynthesisResult) -> dict[str, str]:
     }
     if result.warning:
         headers[SYNTH_WARNING_HEADER] = _header_safe(result.warning)
+    if result.voice_similarity is not None:
+        headers[VOICE_SIMILARITY_HEADER] = f"{result.voice_similarity:.3f}"
     return headers
 
 

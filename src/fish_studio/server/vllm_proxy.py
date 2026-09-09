@@ -24,10 +24,13 @@ from fish_studio.server.synth_log import SynthesisRequestLogger
 from fish_studio.server.synth_validate import (
     MAX_SYNTH_ATTEMPTS,
     SynthCheck,
+    attach_voice,
     judge_raw_synth,
+    line_voice_similarity,
     pick_best_attempt,
     quality_warning,
 )
+from fish_studio.server.voiceprint import VoiceEncoder
 from fish_studio.synthesis import FISH_SYNTHESIS_DEFAULTS, SynthesisResult
 from fish_studio.textnorm import prepare_synthesis_text, split_synthesis_chunks
 from fish_studio.loudness import match_loudness_to_reference
@@ -54,6 +57,7 @@ class VllmFishProxy:
             keep=settings.synth_log_keep,
             enabled=bool(settings.synth_log_enabled and settings.synth_log_dir),
         )
+        self._voice = VoiceEncoder()
 
     @property
     def is_loaded(self) -> bool:
@@ -81,6 +85,7 @@ class VllmFishProxy:
             ),
         )
         ensure_praat_psola()
+        self._voice.warmup()
         self._available = True
 
     def unload(self) -> None:
@@ -139,9 +144,15 @@ class VllmFishProxy:
             mime = mimetypes.guess_type(clone_path.name)[0] or "audio/wav"
             ref_b64 = base64.b64encode(clone_path.read_bytes()).decode("ascii")
             slot_ref, slot_rate = load_reference_audio(audio_paths[0])
+            clone_wav, clone_rate = (
+                (slot_ref, slot_rate)
+                if clone_path == audio_paths[0]
+                else load_reference_audio(clone_path)
+            )
+            ref_embedding = self._voice.embed(clone_wav, clone_rate)
 
             pieces, sample_rate, quality = self._synthesize_chunks(
-                client, chunks, mime, ref_b64, reference_text
+                client, chunks, mime, ref_b64, reference_text, ref_embedding
             )
             self._sample_rate = sample_rate
             raw = concat_audio_chunks(pieces, sample_rate) if len(pieces) > 1 else pieces[0]
@@ -171,6 +182,7 @@ class VllmFishProxy:
             loudness = match_loudness_to_reference(final, sample_rate, slot_ref, slot_rate)
             final = loudness.audio
             warning = quality_warning(quality)
+            voice_similarity = line_voice_similarity(quality)
             try:
                 self._synth_log.log(
                     text_raw=text_raw,
@@ -187,6 +199,7 @@ class VllmFishProxy:
                         "chunk_count": len(chunks),
                         "quality": quality,
                         "warning": warning,
+                        "voice_similarity": voice_similarity,
                         "timing": timing,
                         "loudness": loudness.metrics(),
                     },
@@ -199,6 +212,7 @@ class VllmFishProxy:
                 sample_rate=sample_rate,
                 language=language,
                 warning=warning,
+                voice_similarity=voice_similarity,
             )
         finally:
             if combined_path is not None:
@@ -211,14 +225,15 @@ class VllmFishProxy:
         mime: str,
         ref_b64: str,
         reference_text: str,
+        ref_embedding: list[float] | None,
     ) -> tuple[list[np.ndarray], int, list[dict]]:
-        """Generate each sentence chunk; retry silence / cutoff on that chunk only."""
+        """Generate each sentence chunk; retry silence / cutoff / voice on that chunk only."""
         pieces: list[np.ndarray] = []
         quality: list[dict] = []
         sample_rate = self._sample_rate
         for chunk in chunks:
             audio, sample_rate, report = self._synthesize_chunk_validated(
-                client, chunk, mime, ref_b64, reference_text
+                client, chunk, mime, ref_b64, reference_text, ref_embedding
             )
             pieces.append(audio)
             quality.append(report)
@@ -231,6 +246,7 @@ class VllmFishProxy:
         mime: str,
         ref_b64: str,
         reference_text: str,
+        ref_embedding: list[float] | None = None,
     ) -> tuple[np.ndarray, int, dict]:
         attempts: list[tuple[np.ndarray, int, SynthCheck]] = []
         for attempt in range(1, MAX_SYNTH_ATTEMPTS + 1):
@@ -238,16 +254,23 @@ class VllmFishProxy:
                 self._request_speech(client, chunk, mime, ref_b64, reference_text)
             )
             check = judge_raw_synth(audio, sample_rate, chunk)
+            similarity = (
+                None
+                if ref_embedding is None
+                else self._voice.similarity(audio, sample_rate, ref_embedding)
+            )
+            check = attach_voice(check, similarity)
             attempts.append((audio, sample_rate, check))
             if check.ok:
                 if attempt > 1:
                     logger.info(
-                        "synth recovered on attempt %d/%d (%s, %.1f syl/s, %.2fs): %r",
+                        "synth recovered on attempt %d/%d (%s, %.1f syl/s, %.2fs, sim=%s): %r",
                         attempt,
                         MAX_SYNTH_ATTEMPTS,
                         check.reason or "ok",
                         check.implied_syl_per_sec,
                         check.active_speech_sec,
+                        _sim_label(check.voice_similarity),
                         chunk,
                     )
                 return audio, sample_rate, {
@@ -256,21 +279,23 @@ class VllmFishProxy:
                     **check.metrics(),
                 }
             logger.warning(
-                "synth %s on attempt %d/%d (implied %.1f syl/s, active %.2fs): %r",
+                "synth %s on attempt %d/%d (implied %.1f syl/s, active %.2fs, sim=%s): %r",
                 check.reason,
                 attempt,
                 MAX_SYNTH_ATTEMPTS,
                 check.implied_syl_per_sec,
                 check.active_speech_sec,
+                _sim_label(check.voice_similarity),
                 chunk,
             )
 
         audio, sample_rate, check = pick_best_attempt(attempts)
         logger.warning(
-            "synth kept best failing take after %d attempts (%s, %.1f syl/s): %r",
+            "synth kept best failing take after %d attempts (%s, %.1f syl/s, sim=%s): %r",
             MAX_SYNTH_ATTEMPTS,
             check.reason,
             check.implied_syl_per_sec,
+            _sim_label(check.voice_similarity),
             chunk,
         )
         return audio, sample_rate, {
@@ -356,10 +381,13 @@ class VllmFishProxy:
                     "syllables-per-second rate and at most 1.3×, never slower. "
                     "A line that still overruns is logged as needs_shorter_line "
                     "rather than sped up further. Each chunk is retried up to "
-                    f"{MAX_SYNTH_ATTEMPTS} times if the raw take is silence or "
-                    "implies an impossible syllable rate (cutoff). A valid fast "
-                    "line is kept; if every attempt fails, the most complete "
-                    "take is returned and X-Synth-Warning describes why. "
+                    f"{MAX_SYNTH_ATTEMPTS} times if the raw take is silence, "
+                    "implies an impossible syllable rate (cutoff), or the ECAPA "
+                    "cosine vs the clone prompt is below 0.25 (including short "
+                    "lines). A valid take at or above 0.25 is kept; below 0.30 "
+                    "still sets X-Synth-Warning. If every attempt fails, the "
+                    "best take is returned. X-Voice-Similarity is the weakest "
+                    "chunk cosine. "
                     "After timing, a single linear gain "
                     "matches speech-gated BS.1770 loudness to the first "
                     "speaker_wav. That step is always on and is not a request flag."
@@ -376,6 +404,10 @@ def _decode_wav(wav_bytes: bytes) -> tuple[np.ndarray, int]:
     if not isinstance(audio, np.ndarray) or audio.size == 0:
         raise RuntimeError("vLLM-Omni returned no audio")
     return audio, int(sample_rate)
+
+
+def _sim_label(similarity: float | None) -> str:
+    return "n/a" if similarity is None else f"{similarity:.2f}"
 
 
 def _encode_wav(audio: np.ndarray, sample_rate: int) -> bytes:

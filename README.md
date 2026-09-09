@@ -66,6 +66,12 @@ Each successful synthesize also dumps under `{DATA_ROOT}/logs/synthesis/` (see
 (before timing), `synth_final.wav` (returned audio). `LATEST` names the newest
 request id. Keep count: `FISH_SPEECH_SYNTH_LOG_KEEP` (default 40).
 
+Each chunk is retried up to 3 times if the raw take is silence, a cutoff, or
+the ECAPA cosine vs the clone prompt is below 0.25 (short lines included).
+`X-Voice-Similarity` is the weakest chunk score. Below 0.30 the WAV is still
+returned and `X-Synth-Warning` says so; if every attempt fails, the best take
+is kept.
+
 ### Timing fit
 
 The dub must land in the original line's wall-clock slot, so `match_timing`
