@@ -174,12 +174,14 @@ def test_stanza_keeps_zviazka_stress_on_the_stem() -> None:
 
 def test_lexicon_file_marks_unambiguous_words() -> None:
     marked = stressify(
-        "Ральф сказав йому про Емоджин.",
+        "Ральф сказав йому про Емоджин. Стіна стоїть на заході.",
         StressConfig(enabled=True, lexicon_path=str(_LEXICON), disambiguation="dictionary"),
     )
     assert f"Ра{COMBINING_ACUTE}льф" in marked
     assert f"йому{COMBINING_ACUTE}" in marked
     assert f"Е{COMBINING_ACUTE}моджин" in marked
+    assert f"Стіна{COMBINING_ACUTE}" in marked
+    assert f"за{COMBINING_ACUTE}ході" in marked
 
 
 def test_hyphen_stem_lexicon_marks_second_part() -> None:

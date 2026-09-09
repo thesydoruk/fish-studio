@@ -333,6 +333,25 @@
 хосте́лі
 агрега́тор
 
+# Common nouns the dictionary / model stress on the wrong vowel
+стіна́
+стіні́
+сті́ну
+стіно́ю
+сті́нам
+сті́нами
+сті́нах
+за́хід
+за́ходу
+за́ходом
+за́ході
+за́ходові
+за́ходи
+за́ходів
+за́ходам
+за́ходами
+за́ходах
+
 # Hyphen stems the dictionary marks on only one side
 кво́
 ста́тус-кво́
