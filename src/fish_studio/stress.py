@@ -339,7 +339,12 @@ def _preferred_homonym_accent(parse: dict) -> int | None:
 
 def _install_homonym_disambiguation() -> None:
     """Prefer the Stanza-tagged reading even if skip or a unique dict match
-    already picked the other accent (e.g. genderless past-plural rows)."""
+    already picked the other accent (e.g. genderless past-plural rows).
+
+    ``on_ambiguity=all`` is not enough: once Stanza tags uniquely match one
+    dictionary row, the library returns that row and never collects the
+    other accents. Read the raw trie record instead.
+    """
     global _homonym_patch_installed
     if _homonym_patch_installed:
         return
@@ -347,14 +352,18 @@ def _install_homonym_disambiguation() -> None:
     import ukrainian_word_stress.stressify_ as stressify_mod
 
     original = stressify_mod._accent_positions_from_values
+    parse_value = stressify_mod._parse_dictionary_value
     skip = getattr(stressify_mod.OnAmbiguity, "Skip", "skip")
-    mark_all = getattr(stressify_mod.OnAmbiguity, "All", "all")
 
     def _accent_positions_from_values(values, parse, on_ambiguity=skip):
         preferred = _preferred_homonym_accent(parse)
-        if preferred is not None:
-            all_accents = original(values, parse, mark_all)
-            if preferred in all_accents:
+        if preferred is not None and values:
+            recorded = {
+                accent
+                for _tags, accents in parse_value(values[0])
+                for accent in accents
+            }
+            if preferred in recorded:
                 return [preferred]
         return original(values, parse, on_ambiguity)
 

@@ -210,6 +210,26 @@ def test_stanza_marks_dating_zviazkamy_on_the_ending() -> None:
     assert f"зв'я{COMBINING_ACUTE}зками" not in marked
 
 
+def test_stanza_marks_povodylysya_on_the_stem() -> None:
+    stanza = pytest.importorskip("stanza")
+    try:
+        stanza.Pipeline(
+            "uk",
+            processors="tokenize,pos,mwt",
+            download_method=stanza.pipeline.core.DownloadMethod.REUSE_RESOURCES,
+        )
+    except Exception:
+        pytest.skip("Ukrainian Stanza models are not available")
+
+    marked = apply_stress_marks(
+        "Фінн і Боббі поводилися як покидьки.",
+        disambiguation="stanza",
+        lexicon={},
+    )
+    assert f"пово{COMBINING_ACUTE}дилися" in marked
+    assert f"поводи{COMBINING_ACUTE}лися" not in marked
+
+
 def test_stanza_marks_exclamatory_yaka_on_the_ending() -> None:
     stanza = pytest.importorskip("stanza")
     try:
