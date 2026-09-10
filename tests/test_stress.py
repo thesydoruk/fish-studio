@@ -338,6 +338,17 @@ def test_lexicon_marks_bovdury() -> None:
     assert f"Бо{COMBINING_ACUTE}вдури" in apply_lexicon(already, lexicon)
 
 
+def test_lexicon_marks_zamknenyi() -> None:
+    marked = stressify(
+        "Заходити у замкнений простір, переповнений болотниками?",
+        StressConfig(enabled=True, lexicon_path=str(_LEXICON), disambiguation="dictionary"),
+    )
+    assert f"за{COMBINING_ACUTE}мкнений" in marked
+    lexicon = _load_lexicon(str(_LEXICON))
+    already = f"замкне{COMBINING_ACUTE}ний простір"
+    assert f"за{COMBINING_ACUTE}мкнений" in apply_lexicon(already, lexicon)
+
+
 def test_hyphen_stem_lexicon_marks_second_part() -> None:
     lexicon = _load_lexicon(str(_LEXICON))
     assert apply_lexicon(f"коли{COMBINING_ACUTE}-небудь", lexicon) == (
