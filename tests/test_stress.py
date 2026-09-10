@@ -230,6 +230,26 @@ def test_stanza_marks_exclamatory_yaka_on_the_ending() -> None:
     assert f"Я{COMBINING_ACUTE}ка" not in marked
 
 
+def test_stanza_marks_plural_ptakhy_on_the_ending() -> None:
+    stanza = pytest.importorskip("stanza")
+    try:
+        stanza.Pipeline(
+            "uk",
+            processors="tokenize,pos,mwt",
+            download_method=stanza.pipeline.core.DownloadMethod.REUSE_RESOURCES,
+        )
+    except Exception:
+        pytest.skip("Ukrainian Stanza models are not available")
+
+    marked = apply_stress_marks(
+        "Я бачила, як птахи сідали на Corvega і спалахували полум'ям.",
+        disambiguation="stanza",
+        lexicon={},
+    )
+    assert f"птахи{COMBINING_ACUTE}" in marked
+    assert f"пта{COMBINING_ACUTE}хи" not in marked
+
+
 def test_lexicon_file_marks_unambiguous_words() -> None:
     marked = stressify(
         "Ральф сказав йому про Емоджин. Стіна стоїть на заході. Не хочу бути стукачем. Все скінчено. Активуйте їх. Система має працювати. Я рятував усіх. Відтоді я присягнув.",
@@ -294,6 +314,28 @@ def test_lexicon_marks_napruzhenyi() -> None:
     lexicon = _load_lexicon(str(_LEXICON))
     already = f"Напруже{COMBINING_ACUTE}ний день."
     assert f"Напру{COMBINING_ACUTE}жений" in apply_lexicon(already, lexicon)
+
+
+def test_lexicon_marks_blukachi() -> None:
+    marked = stressify(
+        "Блукачі!",
+        StressConfig(enabled=True, lexicon_path=str(_LEXICON), disambiguation="dictionary"),
+    )
+    assert f"Блукачі{COMBINING_ACUTE}" in marked
+    lexicon = _load_lexicon(str(_LEXICON))
+    already = f"Блу{COMBINING_ACUTE}качі!"
+    assert f"Блукачі{COMBINING_ACUTE}" in apply_lexicon(already, lexicon)
+
+
+def test_lexicon_marks_bovdury() -> None:
+    marked = stressify(
+        "Бовдури.",
+        StressConfig(enabled=True, lexicon_path=str(_LEXICON), disambiguation="dictionary"),
+    )
+    assert f"Бо{COMBINING_ACUTE}вдури" in marked
+    lexicon = _load_lexicon(str(_LEXICON))
+    already = f"Бовдури{COMBINING_ACUTE}."
+    assert f"Бо{COMBINING_ACUTE}вдури" in apply_lexicon(already, lexicon)
 
 
 def test_hyphen_stem_lexicon_marks_second_part() -> None:
@@ -371,6 +413,24 @@ def test_yaka_noun_yak_prefers_the_stem() -> None:
         "feats": "Animacy=Anim|Case=Gen|Gender=Masc|Number=Sing",
     }
     assert _preferred_homonym_accent(parse) == 1
+
+
+def test_ptakhy_plural_prefers_the_ending() -> None:
+    parse = {
+        "text": "птахи",
+        "upos": "NOUN",
+        "feats": "Animacy=Anim|Case=Nom|Gender=Masc|Number=Plur",
+    }
+    assert _preferred_homonym_accent(parse) == 5
+
+
+def test_ptakhy_genitive_ptakha_prefers_the_stem() -> None:
+    parse = {
+        "text": "птахи",
+        "upos": "NOUN",
+        "feats": "Animacy=Anim|Case=Gen|Gender=Fem|Number=Sing",
+    }
+    assert _preferred_homonym_accent(parse) == 3
 
 
 def test_zirky_plural_prefers_the_ending() -> None:

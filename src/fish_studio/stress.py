@@ -161,6 +161,14 @@ _HOMONYM_ACCENT_BY_FEATS: dict[str, tuple[tuple[tuple[str, ...], int], ...]] = {
         (("Number=Plur",), 5),  # зірки́
         (("Case=Gen", "Number=Sing"), 2),  # зі́рки
     ),
+    # птахи́ (pl. of птах) vs пта́хи (gen of пта́ха).
+    "птахи": (
+        (("Number=Plur",), 5),
+        (("Case=Gen", "Number=Sing"), 3),
+    ),
+    "птахам": ((("Number=Plur",), 5),),  # птаха́м
+    "птахами": ((("Number=Plur",), 5),),
+    "птахах": ((("Number=Plur",), 5),),
 }
 
 
