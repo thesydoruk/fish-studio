@@ -143,9 +143,10 @@ _HOMONYM_ACCENT_BY_FEATS: dict[str, tuple[tuple[tuple[str, ...], int], ...]] = {
         (("upos=ADJ",), 2),  # ба́тьків
     ),
     "коли": (
-        (("upos=ADV",), 4),  # коли́
+        (("upos=ADV",), 4),  # коли́ «when»
         (("upos=CCONJ",), 4),
         (("upos=SCONJ",), 4),
+        (("upos=NOUN",), 2),  # ко́ли, gen of ко́ла the drink
     ),
     "яка": (
         (("upos=PRON",), 3),  # яка́
@@ -352,19 +353,15 @@ def _install_homonym_disambiguation() -> None:
     import ukrainian_word_stress.stressify_ as stressify_mod
 
     original = stressify_mod._accent_positions_from_values
-    parse_value = stressify_mod._parse_dictionary_value
     skip = getattr(stressify_mod.OnAmbiguity, "Skip", "skip")
 
     def _accent_positions_from_values(values, parse, on_ambiguity=skip):
         preferred = _preferred_homonym_accent(parse)
-        if preferred is not None and values:
-            recorded = {
-                accent
-                for _tags, accents in parse_value(values[0])
-                for accent in accents
-            }
-            if preferred in recorded:
-                return [preferred]
+        text = str(parse.get("text") or "")
+        # Title-case trie rows (Коли) may omit the lowercase homonym's
+        # other accent, so do not require preferred to appear in ``values``.
+        if preferred is not None and 0 < preferred <= len(text):
+            return [preferred]
         return original(values, parse, on_ambiguity)
 
     stressify_mod._accent_positions_from_values = _accent_positions_from_values
@@ -390,6 +387,212 @@ def _stressifier(on_ambiguity: str, disambiguation: str, prefer_cpu: bool):
         on_ambiguity=on_ambiguity,
         disambiguation=disambiguation,
     )
+
+
+# Stanza often tags the rare reading as the common function-word POS.
+_DRINK_BEFORE_KOLI = frozenset(
+    {
+        "кола",
+        "колу",
+        "колі",
+        "колою",
+        "нука",
+        "пляшка",
+        "пляшки",
+        "пляшку",
+        "пляшці",
+        "пляшкою",
+        "пляшок",
+        "склянка",
+        "склянки",
+        "склянку",
+        "склянці",
+        "склянкою",
+        "напій",
+        "напою",
+        "напої",
+        "випий",
+        "випити",
+        "банка",
+        "банки",
+        "банку",
+    }
+)
+_YAK_ANIMAL_PREV = frozenset(
+    {
+        "ріг",
+        "роги",
+        "рогів",
+        "рогами",
+        "шерсть",
+        "шкура",
+        "шкуру",
+        "шкури",
+        "хутро",
+        "стадо",
+        "стада",
+        "сіно",
+        "сіна",
+        "як",
+        "яків",
+    }
+)
+_BATKIV_ADJ_NEXT = frozenset(
+    {
+        "дім",
+        "дома",
+        "будинок",
+        "будинку",
+        "голос",
+        "голосу",
+        "наказ",
+        "наказу",
+        "кімната",
+        "кімнаті",
+        "речі",
+        "речей",
+        "спадок",
+        "спадку",
+        "брат",
+        "брата",
+        "ім'я",
+        "імені",
+        "зброя",
+        "зброю",
+    }
+)
+_BUNDLE_PREV = frozenset(
+    {
+        "дві",
+        "два",
+        "три",
+        "кілька",
+        "декілька",
+        "розв'яжи",
+        "розв'язати",
+        "зв'яжи",
+        "зв'язати",
+    }
+)
+_BUNDLE_NEXT = frozenset(
+    {
+        "ключів",
+        "ключа",
+        "ключі",
+        "гранат",
+        "гранати",
+        "дров",
+        "дрова",
+        "дротів",
+        "дроти",
+        "трав",
+    }
+)
+_ZVIAZOK_FEM = {
+    "зв'язку": "зв'я́зку",
+    "зв'язки": "зв'я́зки",
+    "зв'язків": "зв'я́зків",
+    "зв'язкам": "зв'я́зкам",
+    "зв'язками": "зв'я́зками",
+    "зв'язках": "зв'я́зках",
+}
+_ZVIAZOK_MASC = {
+    "зв'язку": "зв'язку́",
+    "зв'язки": "зв'язки́",
+    "зв'язків": "зв'язкі́в",
+    "зв'язкам": "зв'язка́м",
+    "зв'язками": "зв'язка́ми",
+    "зв'язках": "зв'язка́х",
+}
+_LOCK_BEFORE_ZAMOK = frozenset(
+    {
+        "зламати",
+        "зламаю",
+        "зламаєш",
+        "зламає",
+        "зламаємо",
+        "зламайте",
+        "відімкни",
+        "відімкнути",
+        "відімкну",
+        "відчини",
+        "відчинити",
+        "відчиню",
+        "ключ",
+        "ключем",
+        "ключі",
+        "свічка",
+    }
+)
+_CASTLE_BEFORE_ZAMOK = frozenset(
+    {
+        "відбудовувати",
+        "відбудувати",
+        "відбити",
+        "відіб'ємо",
+        "фортеця",
+        "фортеці",
+    }
+)
+
+
+def _reaccent_context_homonyms(text: str) -> str:
+    """Override Stanza/dict when nearby words pick the rare reading."""
+    if not text:
+        return text
+    matches = list(_WORD_RE.finditer(text))
+    if not matches:
+        return text
+
+    plains = [_casefold_key(match.group(0)) for match in matches]
+    out: list[str] = []
+    last = 0
+    for i, match in enumerate(matches):
+        word = match.group(0)
+        prev = plains[i - 1].split("-")[-1] if i else ""
+        nxt = plains[i + 1].split("-")[0] if i + 1 < len(matches) else ""
+
+        if "-" in strip_stress_marks(word):
+            stems = word.split("-")
+            rewritten: list[str] = []
+            stem_prev = prev
+            for stem in stems:
+                plain = _casefold_key(stem)
+                if plain == "коли" and stem_prev in _DRINK_BEFORE_KOLI:
+                    rewritten.append(_match_case(stem, "ко́ли"))
+                else:
+                    rewritten.append(stem)
+                stem_prev = plain
+            word = "-".join(rewritten)
+
+        plain = _casefold_key(word)
+        if plain == "коли" and prev in _DRINK_BEFORE_KOLI:
+            word = _match_case(word, "ко́ли")
+        elif plain in {"яка", "яку"} and prev in _YAK_ANIMAL_PREV:
+            word = _match_case(word, "я́ка" if plain == "яка" else "я́ку")
+        elif plain == "батьків" and nxt in _BATKIV_ADJ_NEXT:
+            word = _match_case(word, "ба́тьків")
+        elif plain in _ZVIAZOK_FEM:
+            target = (
+                _ZVIAZOK_FEM[plain]
+                if prev in _BUNDLE_PREV or nxt in _BUNDLE_NEXT
+                else _ZVIAZOK_MASC[plain]
+            )
+            word = _match_case(word, target)
+        elif plain == "замок":
+            if prev in _LOCK_BEFORE_ZAMOK:
+                word = _match_case(word, "замо́к")
+            elif prev in _CASTLE_BEFORE_ZAMOK or (
+                strip_stress_marks(word)[:1].isupper()
+                and strip_stress_marks(word)[1:].islower()
+            ):
+                word = _match_case(word, "за́мок")
+
+        out.append(text[last:match.start()])
+        out.append(word)
+        last = match.end()
+    out.append(text[last:])
+    return "".join(out)
 
 
 def apply_stress_marks(
@@ -419,10 +622,10 @@ def apply_stress_marks(
     if force:
         text = strip_stress_marks(text)
     elif has_stress_marks(text):
-        return apply_lexicon(text, lexicon)
+        return _reaccent_context_homonyms(apply_lexicon(text, lexicon))
 
     marked = _stressifier(on_ambiguity, disambiguation, prefer_cpu)(text)
-    return apply_lexicon(marked, lexicon)
+    return _reaccent_context_homonyms(apply_lexicon(marked, lexicon))
 
 
 def stressify(

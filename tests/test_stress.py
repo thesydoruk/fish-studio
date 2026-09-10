@@ -230,6 +230,26 @@ def test_stanza_marks_povodylysya_on_the_stem() -> None:
     assert f"поводи{COMBINING_ACUTE}лися" not in marked
 
 
+def test_stanza_marks_cola_koly_on_the_stem() -> None:
+    stanza = pytest.importorskip("stanza")
+    try:
+        stanza.Pipeline(
+            "uk",
+            processors="tokenize,pos,mwt",
+            download_method=stanza.pipeline.core.DownloadMethod.REUSE_RESOURCES,
+        )
+    except Exception:
+        pytest.skip("Ukrainian Stanza models are not available")
+
+    marked = apply_stress_marks(
+        "Дай пляшку коли. Пляшка Нука-коли.",
+        disambiguation="stanza",
+        lexicon={},
+    )
+    assert marked.count(f"ко{COMBINING_ACUTE}ли") == 2
+    assert f"коли{COMBINING_ACUTE}" not in marked
+
+
 def test_stanza_marks_exclamatory_yaka_on_the_ending() -> None:
     stanza = pytest.importorskip("stanza")
     try:
@@ -480,6 +500,48 @@ def test_koly_conjunction_prefers_the_ending() -> None:
         "feats": "",
     }
     assert _preferred_homonym_accent(parse) == 4
+
+
+def test_drink_koli_keeps_stem_without_stanza() -> None:
+    marked = apply_stress_marks("Дай пляшку коли.", disambiguation="dictionary", lexicon={})
+    assert f"ко{COMBINING_ACUTE}ли" in marked
+
+
+def test_context_marks_yak_animal_on_the_stem() -> None:
+    marked = apply_stress_marks("Роги яка стирчать. Дай сіна яку.", disambiguation="dictionary")
+    assert f"я{COMBINING_ACUTE}ка" in marked
+    assert f"я{COMBINING_ACUTE}ку" in marked
+
+
+def test_context_marks_batkiv_adjective_on_the_stem() -> None:
+    marked = apply_stress_marks("Це батьків дім.", disambiguation="dictionary")
+    assert f"ба{COMBINING_ACUTE}тьків" in marked
+    noun = apply_stress_marks("Дім батьків зруйновано.", disambiguation="dictionary")
+    assert f"ба{COMBINING_ACUTE}тьків" not in noun
+
+
+def test_context_marks_zviazka_bundle_on_the_stem() -> None:
+    bundle = apply_stress_marks("Розв'яжи зв'язку ключів. Дві зв'язки гранат.", disambiguation="dictionary")
+    assert f"зв'я{COMBINING_ACUTE}зку" in bundle
+    assert f"зв'я{COMBINING_ACUTE}зки" in bundle
+    radio = apply_stress_marks("Немає зв'язку з базою.", disambiguation="dictionary")
+    assert f"зв'язку{COMBINING_ACUTE}" in radio
+
+
+def test_context_marks_zamok_lock_vs_castle() -> None:
+    lock = apply_stress_marks("Спробуй зламати замок унизу.", disambiguation="dictionary")
+    assert f"замо{COMBINING_ACUTE}к" in lock
+    castle = apply_stress_marks("Будемо відбудовувати Замок.", disambiguation="dictionary")
+    assert f"За{COMBINING_ACUTE}мок" in castle
+
+
+def test_koly_noun_cola_prefers_the_stem() -> None:
+    parse = {
+        "text": "коли",
+        "upos": "NOUN",
+        "feats": "Animacy=Inan|Case=Gen|Gender=Fem|Number=Sing",
+    }
+    assert _preferred_homonym_accent(parse) == 2
 
 
 def test_batkiv_noun_prefers_the_ending() -> None:
