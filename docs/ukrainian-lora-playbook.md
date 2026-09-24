@@ -262,6 +262,27 @@ on six voices the model never heard 0.514 against 0.497 (stock 0.513). Dose on
 the early layers does not matter: 0.7, 0.85 and 1.0 score the same, so the
 default is 1.0.
 
+One thing the early layers do not carry: the hard р. On the `rhotic` axis
+(share of «р» whose F3 drops below 0.8 of the vowel's, the English
+approximant a listener hears as a soft «р»; human recordings 10%) the late
+`w2` layers hold most of the trill, and they hold it together with the
+held-out cloning cost, so a merge can only trade one for the other:
+
+| merge (early `w2` + text table always at 1.0) | stress | clone, held-out voices | rhotic |
+| --- | --- | --- | --- |
+| late `w2` at 0 (the default) | 74.1% | 0.494 | 19% |
+| late `w2` at 0.5 | 73.1% | 0.480 | 14% |
+| layers 12–23 at 1.0 | 75.2% | 0.434 | 16% |
+| layers 24–35 at 1.0 | 74.1% | 0.511 | 20% |
+| stock | 59.0% | 0.513 | 28% (6 lines) |
+
+An English clone prompt makes every point worse by roughly ten points, and
+the effect is stronger on some voices, which is why the soft «р» is heard
+"on some characters". Breaking the trade-off is a training matter, not a
+merge one: the late layers learned the trill and the sixteen training
+voices as one thing, and only a corpus with many more speakers can separate
+them.
+
 To experiment, pass groups on the command line (they replace the default set):
 
 ```bash
