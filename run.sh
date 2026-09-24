@@ -27,7 +27,7 @@ Commands:
   train <step>         Fish Speech s2-pro LoRA fine-tuning
   bg-train [fish]      Start Fish training in background with logging
   tensorboard <cmd>    TensorBoard for training runs: start, stop, status
-  server <start|…>     Start/stop/restart TTS server, or length-check it
+  server <start|…>     Start/stop/restart TTS server, length-check or uk-eval it
   status               Dataset, training, server, GPU overview
   logs <name>          Tail server / training / pipeline log
   analyze <kind> PATH  Quality helpers: transcripts | clips
@@ -51,7 +51,6 @@ Examples:
   ./run.sh analyze transcripts data/work/channel-a/transcripts
   ./run.sh synthesize -t "Привіт" -w ref.wav
   ./run.sh train all
-  ./run.sh train infer --text "Привіт" --speaker-wav ref.wav --out out.wav
   ./run.sh server length-check --ref ref.wav --ref-text "текст референсу"
   ./run.sh init
 
@@ -65,7 +64,7 @@ EOF
 
 train_usage() {
   cat <<'EOF'
-Usage: ./run.sh train <export|vq|protos|train|merge|export-vllm|infer|all> [args...]
+Usage: ./run.sh train <export|vq|protos|train|merge|export-vllm|all> [args...]
 
 Steps:
   export       pipe-delimited dataset → Fish .wav + .lab under {data_root}/training/raw/
@@ -73,16 +72,14 @@ Steps:
   vq           Extract semantic tokens (.npy) with the stock s2-pro codec
   protos       Pack tokens into protobuf shards for training
   train        LoRA fine-tune the s2-pro LLAMA weights
-  merge        Merge LoRA into a standalone checkpoint → training/merged/
+  merge        Fold LoRA, keep TRAINING_MERGE_SCALE_FOR groups → training/merged/
   export-vllm  Convert merged checkpoint to HF layout for vLLM-Omni → training/vllm/
-  infer        CLI test synthesis with the merged checkpoint
   all          export → vq → protos → train → merge (extra args go to train only)
 
 Requires stock Fish Speech s2-pro from: ./run.sh install all
 Requires exported dataset (e.g. ./run.sh dataset run && ./run.sh dataset merge)
 
-To serve the fine-tuned model:
-  FISH_SPEECH_USE_FINETUNED=true
+To serve the fine-tuned model: FISH_SPEECH_MODEL=training/vllm, then ./run.sh stack restart
 EOF
 }
 
@@ -167,6 +164,11 @@ EOF
         activate_venv "${ROOT}"
         exec python -m fish_studio.server.length_check "$@"
         ;;
+      uk-eval)
+        shift
+        activate_venv "${ROOT}"
+        exec python -m fish_studio.server.uk_eval "$@"
+        ;;
       *)
         activate_venv "${ROOT}"
         exec python -m fish_studio.server.serve "$@"
@@ -178,10 +180,14 @@ EOF
     exec fish-dataset init "$@"
     ;;
   train)
-    step="${1:-all}"
-    if [[ $# -gt 0 ]]; then
-      shift
+    # No step means "show me the steps", never "run them all": `all` re-exports
+    # the dataset, which wipes training/raw before writing it again.
+    if [[ $# -eq 0 ]]; then
+      train_usage >&2
+      exit 1
     fi
+    step="$1"
+    shift
     activate_venv "${ROOT}"
     export PYTHONUNBUFFERED=1
     case "${step}" in
@@ -202,9 +208,6 @@ EOF
         ;;
       export-vllm)
         exec python -m fish_studio.training.export_vllm "$@"
-        ;;
-      infer)
-        exec python -m fish_studio.training.infer "$@"
         ;;
       all)
         python -m fish_studio.training.export_dataset

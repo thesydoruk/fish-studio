@@ -87,8 +87,7 @@ SPEAKER_CLUSTER_MIN_SPEECH_SEC=300
 
 TRAINING_DATASET_ID=combined
 TRAINING_PROJECT_NAME=fish-uk
-TRAINING_LORA_TARGET_MODULES=attention,mlp,embeddings
-TRAINING_MERGE_SCALE=0.5
+TRAINING_LORA_TARGET_MODULES=mlp_w2,embeddings
 ```
 
 Notes:
@@ -182,8 +181,7 @@ pkill -f 'python -m audio_intel.server' || true
 # TRAINING_DATASET_ID=combined
 # TRAINING_PROJECT_NAME=fish-uk   # new name = new run directory
 # TRAINING_CONTINUE_PATH=                  # empty = train from base s2-pro
-# TRAINING_LORA_TARGET_MODULES=attention,mlp,embeddings
-# TRAINING_MERGE_SCALE=0.5
+# TRAINING_LORA_TARGET_MODULES=mlp_w2,embeddings
 
 ./run.sh bg-train all          # export → vq → protos → train → merge
 ./run.sh logs training
@@ -201,28 +199,28 @@ Steps inside `train all`:
 
 | Step | Output |
 | --- | --- |
-| `export` | `training/raw/{speaker}/*.wav` + stressed `.lab` |
+| `export` | `training/raw/{speaker}/*.wav` (hard links into the dataset) + stressed `.lab`; `TRAINING_EXPORT_NUM_WORKERS` processes, each with its own aligner — stop the TTS stack first when `STRESS_ACOUSTIC_DEVICE=cuda` |
 | `vq` | `.npy` semantic tokens beside each wav |
 | `protos` | `training/protos/` shards |
 | `train` | `training/runs/<TRAINING_PROJECT_NAME>/` |
-| `merge` | `training/merged/` at `TRAINING_MERGE_SCALE` (default 0.5) |
+| `merge` | `training/merged/`: early `w2` + text table from the adapter, rest stock — see 6b |
 
 Keep `STRESS_*` identical between training and later serving.
+
+What is measured and what is not: the targets (`mlp_w2,embeddings`) and the
+merge groups (section 6b) were chosen against numbers. The rank, alpha,
+learning rate, step count and batch in `.env.example` are the values of the
+one adapter those numbers were taken on; no sweep over them exists, so treat
+them as a working point, not an optimum.
 
 ## 6. Smoke-test and serve
 
 ```bash
-./run.sh train infer \
-  --text "Доброго дня! Вартість квитка 150 грн." \
-  --speaker-wav data/datasets/combined/reference.wav \
-  --speaker-text "Доброго дня!" \
-  --out /tmp/smoke.wav
-
 ./run.sh train export-vllm          # → data/training/vllm/
 # .env: FISH_SPEECH_MODEL=training/vllm
-#       FISH_SPEECH_USE_FINETUNED=true
-./run.sh vllm restart
-./run.sh serve
+./run.sh stack restart
+./run.sh synthesize -t "Доброго дня! Вартість квитка 150 грн." -w data/datasets/combined/reference.wav
+./run.sh server uk-eval --label vllm   # section 13
 ```
 
 ### Never overwrite weights under a live vLLM
@@ -243,35 +241,37 @@ Or export into a **new directory**, point `FISH_SPEECH_MODEL` at it, then
 restart. Do not `cp` / `save` on top of the file a live server is reading —
 especially dangerous during a long synthesis batch.
 
-## 6b. Merge scale
+## 6b. What the merge keeps
 
-Do **not** serve a raw fold. One slow pass (`attention,mlp,embeddings`,
-position-gated, semantic ids frozen) at full scale gives strong Ukrainian and
-destroys in-context clone. The same adapter at a lower dose keeps both sides.
-
-`./run.sh train merge` already writes that dose:
+`./run.sh train merge` folds the adapter and then keeps only part of it. Each
+tensor takes the dose of the first `TRAINING_MERGE_SCALE_FOR` group whose regex
+matches its fish-native name; a tensor no group matches goes back to stock:
 
 ```
-W = stock + TRAINING_MERGE_SCALE × (ft − stock)
+W = stock + scale × (ft − stock)
 ```
 
-Default `TRAINING_MERGE_SCALE=0.5`. Scale axis, measured on-ear:
+The default is the measured recipe for an `mlp_w2,embeddings` adapter: the
+`w2` projections of slow layers 0–11 and the text table at full dose, every
+other tensor stock. Pronunciation lives in those early layers; the late `w2`
+layers add no pronunciation and cost clone on voices the model never heard.
+Against a single 0.7 blend of the whole adapter this scores better on both
+axes at once: on the frozen probe set stress placement 75.5% against 72.2%
+(stock 59.0%, human recordings of the same lines 73.1%), and clone similarity
+on six voices the model never heard 0.514 against 0.497 (stock 0.513). Dose on
+the early layers does not matter: 0.7, 0.85 and 1.0 score the same, so the
+default is 1.0.
 
-- **0.4** — more clone, weaker UA
-- **0.5** — people clone well, UA clearly better than stock
-- **0.6** — more UA; unusual voices start to slip toward the dataset
-
-Do not raise the blend to force a harder accent — that is the same knob that
-kills speaker identity.
-
-To try another scale, re-merge the same LoRA:
+To experiment, pass groups on the command line (they replace the default set):
 
 ```bash
-./run.sh train merge --merge-scale 0.4
+./run.sh train merge \
+  --merge-scale-for '^layers\.([0-9]|1[0-7])\.feed_forward\.w2\.=1.0' \
+  --merge-scale-for '^embeddings\.=1.0'
 ```
 
 Then `export-vllm` into a **new** directory (stop vLLM first; never overwrite
-a live `model.safetensors`):
+a live `model.safetensors`), and score it with `uk-eval` (section 13):
 
 ```bash
 ./run.sh vllm stop
@@ -299,7 +299,7 @@ a live `model.safetensors`):
 ./run.sh dataset merge -o combined
 ./run.sh bg-train all
 ./run.sh logs training
-./run.sh train infer --text "…" --speaker-wav ref.wav --out out.wav
+./run.sh server uk-eval --label <name>    # score the served model (section 13)
 
 # Inspect quality helpers (optional)
 ./run.sh analyze transcripts data/work/<source>/transcripts
@@ -317,7 +317,7 @@ a live `model.safetensors`):
 | `data/datasets/combined/` | Merged training set |
 | `data/training/raw/` | Stressed wav+lab for Fish |
 | `data/training/runs/` | LoRA checkpoints |
-| `data/training/merged/` | Merged standalone weights (already at `TRAINING_MERGE_SCALE`) |
+| `data/training/merged/` | Merged standalone weights (only the `TRAINING_MERGE_SCALE_FOR` groups of the fold) |
 | `data/training/vllm/` | HF layout for vLLM-Omni |
 | `data/logs/training.log` | `bg-train` log |
 
@@ -327,7 +327,7 @@ a live `model.safetensors`):
 | --- | --- | --- |
 | audio-intel (align + diarize + PANNs) | ~10–20+ GB VRAM; keep `ASR_PARALLEL_WORKERS=1` | downloads + transcripts (tens–hundreds of GB for multi-channel YouTube) |
 | `dataset merge` | CPU | ≈ sum of input `datasets/*/wavs` (copy) |
-| `train export` / `vq` / LoRA | prefer free GPU (stop audio-intel) | `training/raw` ≈ dataset size; checkpoints ~100 MB each if `SAVE_TOP_K=-1` |
+| `train export` / `vq` / LoRA | free GPU (stop audio-intel and the TTS stack) | `training/raw` is hard-linked, ~0 extra; VQ `.npy` small; checkpoints ~100 MB each if `SAVE_TOP_K=-1` |
 
 A bilingual multi-channel + HF `uk-mix` merge on the order of **~200k clips / ~200 h** is a realistic large run; smaller subsets still work for smoke tests.
 
@@ -400,6 +400,33 @@ Exit status is non-zero below `--fail-under` (default `0.70`) or above
 `--max-level-drop` (default `12` dB). Use one frozen reference clip for every
 checkpoint, otherwise the numbers are not comparable.
 
+Once a checkpoint survives that, score its Ukrainian against the frozen probe
+set (`configs/uk_probe.tsv`, 134 lines with human recordings of the same text):
+
+```bash
+HF_HUB_OFFLINE=1 ./run.sh server uk-eval --label <name> --json-out data/logs/uk_eval/<name>.json
+```
+
+One line per model, each axis with the human recording's own number beside it
+as the ceiling (`h…`), never 100%:
+
+| axis | what it measures |
+| --- | --- |
+| `stress` | stressed vowel against curated truth: CTC forced alignment (Ukrainian wav2vec2) gives each vowel its span, filled duration × energy picks the stressed one |
+| `follow` | the same against the marks the server's own text pipeline put on the request |
+| `voice` | ECAPA cosine to the reference clip (training speakers) |
+| `--voices` | the same on speakers the model never saw: `data/eval/voices/index.tsv` from `scripts/extract_heldout_voices.py` |
+| `gop`, `margin` | alignment confidence per letter; how far «г» beats «ґ» and «и» beats «і» |
+| `palatal`, `trill` | «р»: F2 at the release into the vowel; trill duration, r/v level, closures, share of weak trills |
+| `pitch` | F0 σ and 5–95 range in semitones |
+| `vowel` | median F1/F2 of «и» and «і» and the distance between them |
+
+Two things this set cannot show: intonation is flatter than native speech for
+every fine-tune (range ~10 st against 12.7) and does not move with the merge,
+and a residual soft «р» or «и» read as «і» sits below what these features
+resolve — listen for those. `scripts/vowel_tokens.py` pairs every «и» with the
+human recording of the same word when the average hides a shift.
+
 ## 14. Why an adapter can wreck the audio decoder
 
 `loralib` seeds its two wrappers as mirror images, and only one of them is
@@ -411,22 +438,13 @@ Embedding:  lora_A = 0,                lora_B = normal(0, 1)  →  ‖B‖ ≈ 2
 ```
 
 Both start at a zero update, so nothing looks wrong. But each factor's gradient
-is proportional to the other, so the embedding's factor moves under a matrix
-ninety times larger than the linear one's, and its update lands large from the
-first step rather than growing into place. Against released s2-pro weights at
-`lr=5e-5`, `r=32`, `alpha=64`, `codebook_embeddings` drifts an order of
-magnitude faster than the transformer matrices:
-
-| matrix | ‖ΔW‖ / ‖W‖ at step 500 | at step 12000 |
-| --- | --- | --- |
-| `codebook_embeddings` (audio decoder) | 17.7% | 48.8% |
-| `fast_embeddings` | 16.9% | 22.1% |
-| text `embeddings` | 4.7% | 14.8% |
-| every transformer matrix, both stacks | 0.7–2.5% | 1.8–4.3% |
-
-`codebook_embeddings` turns an acoustic code index into a vector for the audio
-decoder. Move it far enough and the decoder no longer agrees with the tokens
-the model emits — quiet, rate-scrambled audio that sounds like fading.
+is proportional to the other, so an unpatched embedding adapter moves under a
+matrix ninety times larger than a linear one's and lands large from the first
+step instead of growing into place. `codebook_embeddings` turns an acoustic
+code index into a vector for the audio decoder; move it far enough and the
+decoder no longer agrees with the tokens the model emits — quiet,
+rate-scrambled audio that sounds like fading. That is why the acoustic side is
+never in the default targets and why the embedding adapter is rescaled.
 
 Three patches in `training/lora_patch.py` keep fine-tuning aligned with serve:
 
@@ -438,8 +456,7 @@ Three patches in `training/lora_patch.py` keep fine-tuning aligned with serve:
 
 1. **Embedding LoRA scale.** `_rescale_embedding_lora` reseeds `lora_B` at the
    Kaiming scale so one learning rate means the same thing for every adapted
-   matrix. Compare any checkpoint against the released weights and confirm no
-   group is an order of magnitude out of line with the others.
+   matrix.
 
 2. **Tied logit head.** s2-pro ties text `embeddings` to the token logits
    (`tie_word_embeddings=True`, no separate `output` module):
@@ -449,10 +466,10 @@ Three patches in `training/lora_patch.py` keep fine-tuning aligned with serve:
    saw. `patch_tied_embedding_logits` adds the same delta to the logits during
    training so the trained function matches the merged checkpoint.
 
-Default `TRAINING_LORA_TARGET_MODULES=attention,mlp,embeddings` is one pass
-over the slow stack. `codebook_embeddings` and `fast_*` must be listed
-separately to adapt the acoustic codebook / decoder. `output` matches nothing
-on s2-pro: the head it would adapt does not exist as a separate matrix (it
-*is* the embedding table).
+Default `TRAINING_LORA_TARGET_MODULES=mlp_w2,embeddings` adapts the `w2`
+down-projection of each slow MLP and the text table; `attention,mlp,embeddings`
+is the wider slow pass. `codebook_embeddings` and `fast_*` must be listed
+separately to adapt the acoustic codebook / decoder. The logit head is the
+embedding table itself, so `embeddings` covers it.
 
 Archiving `downloads/` + `transcripts/` off-box is optional. Re-segment only needs those two trees on disk.

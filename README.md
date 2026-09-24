@@ -161,6 +161,7 @@ Single entry point: **`./run.sh`**
 | `./run.sh bg-train`         | LoRA training in background (`data/logs/training.log`)                                      |
 | `./run.sh tensorboard`      | TensorBoard for training runs: `start`, `stop`, `status`                                    |
 | `./run.sh server length-check` | Probe the served model for early termination (see the playbook)                          |
+| `./run.sh server uk-eval`   | Score the served model: stress, «р», «и/і», pitch range, clone on held-out voices (see the playbook) |
 | `./run.sh server start`     | Background server → `data/logs/server.log`                                                  |
 | `./run.sh status`           | Datasets, checkpoints, server, GPU, audio-intel warning                                     |
 | `./run.sh logs <name>`      | `server`, `training`, `pipeline`                                                            |
@@ -307,23 +308,21 @@ cp .env.example .env
 ./run.sh train train
 ./run.sh train merge
 
-# Test merged checkpoint:
-./run.sh train infer \
-  --text "Доброго дня!" \
-  --speaker-wav data/datasets/combined/reference.wav \
-  --speaker-text "Доброго дня!" \
-  --out synthesized.wav
+# Serve and score it:
+./run.sh train export-vllm --output data/training/vllm
+# .env: FISH_SPEECH_MODEL=training/vllm
+./run.sh stack restart
+./run.sh server uk-eval --label vllm
 ```
 
 | Command                      | Description                                          |
 | ---------------------------- | ---------------------------------------------------- |
-| `./run.sh train export`      | Dataset → Fish `.wav` + stressed `.lab` under `training/raw/` |
+| `./run.sh train export`      | Dataset → Fish `.wav` (hard links) + stressed `.lab` under `training/raw/`, in `TRAINING_EXPORT_NUM_WORKERS` processes |
 | `./run.sh train vq`          | Extract semantic tokens with the stock s2-pro codec  |
 | `./run.sh train protos`      | Pack tokens into protobuf shards                     |
 | `./run.sh train train`       | LoRA fine-tune LLAMA weights → `training/runs/`      |
-| `./run.sh train merge`       | Fold LoRA, then blend at `TRAINING_MERGE_SCALE` → `training/merged/` |
+| `./run.sh train merge`       | Fold LoRA, keep the `TRAINING_MERGE_SCALE_FOR` groups → `training/merged/` |
 | `./run.sh train export-vllm` | Convert merged checkpoint for vLLM-Omni              |
-| `./run.sh train infer`       | CLI synthesis with merged checkpoint                 |
 
 Stock s2-pro weights under `checkpoints/fish-speech/` are never modified.
 
@@ -333,28 +332,37 @@ Stock s2-pro weights under `checkpoints/fish-speech/` are never modified.
 
 | Target                                   | Trains                                             |
 | ---------------------------------------- | -------------------------------------------------- |
-| `attention`, `mlp`, `embeddings`, `output` | Slow text→semantic stack — pronunciation, prosody. `embeddings` is the text table only; `codebook_embeddings` is separate |
+| `attention`, `mlp`, `embeddings`         | Slow text→semantic stack — pronunciation, prosody. `embeddings` is the text table only; `codebook_embeddings` is separate |
+| `mlp_w2`                                 | Only the `w2` projection of each slow MLP           |
 | `fast_*` counterparts                    | Acoustic decoder — timbre and delivery              |
 
-Default is one slow pass: `attention,mlp,embeddings`. Semantic-id rows of the
-text table stay frozen; the position gate keeps the system/ref prefix stock
-during train. List `fast_*` explicitly to train the acoustic decoder.
+Default is `mlp_w2,embeddings`; the wider `attention,mlp,embeddings` pass
+trains more and costs more clone (attention is the circuit that reads the
+prompt). Semantic-id
+rows of the text table stay frozen; the position gate keeps the system/ref
+prefix stock during train. List `fast_*` explicitly to train the acoustic
+decoder.
 
-On s2-pro `output` matches no module: the logit head is the embedding table
-itself (tied weights). The `embeddings` target covers it instead — a training
-patch (`patch_tied_embedding_logits`) feeds the adapter's delta into the tied
-logits during training, so the merged checkpoint computes exactly the function
-that was trained.
+s2-pro ties the logit head to the embedding table, so the `embeddings` target
+covers both: a training patch (`patch_tied_embedding_logits`) feeds the
+adapter's delta into the tied logits during training, so the merged checkpoint
+computes exactly the function that was trained.
 
 `./run.sh train merge` regenerates a matching hydra LoRA config from these
-settings, then blends the fold toward stock:
+settings, folds the adapter, then keeps only part of the fold. Each tensor
+gets the dose of the first `TRAINING_MERGE_SCALE_FOR` group whose regex
+matches its name; a tensor no group matches goes back to stock:
 
 ```
-W = stock + TRAINING_MERGE_SCALE × (ft − stock)
+W = stock + scale × (ft − stock)
 ```
 
-Default scale is `0.5`. A raw fold (`1.0`) on attention+mlp kills in-context
-clone. Use `1.0` only when you want the full adapter.
+The default keeps the `w2` projections of slow layers 0–11 and the text table
+at full dose and leaves everything else stock. That is where the pronunciation
+of an `mlp_w2,embeddings` adapter lives; the late `w2` layers add none and cost
+clone on voices the model never heard. Pass `--merge-scale-for PATTERN=SCALE`
+(repeatable) to experiment, and measure the result with
+`./run.sh server uk-eval` before serving it.
 
 ### Ukrainian stress marks
 
@@ -366,9 +374,11 @@ reads wrong — including domain vocabulary absent from any audiobook corpus.
 Dataset export (`./run.sh dataset …` and `./run.sh train export`) marks
 transcripts as it writes them: apostrophe normalisation → dictionary/Stanza
 (heteronyms stay unmarked unless Stanza features pick a reading) → unambiguous
-lexicon (`configs/stress_lexicon.txt`) → acoustic fallback from the clip WAV
-for words still unmarked. Synthesis uses the same text pipeline without the
-acoustic step (no aligned audio on the request). Marked text sounds natural
+lexicon (`configs/stress_lexicon.txt`) → forced alignment of the clip WAV
+(`STRESS_ACOUSTIC_FALLBACK`) for words still unmarked, written only where the
+winning vowel beats the runner-up by `STRESS_ACOUSTIC_MARGIN`. Synthesis uses
+the same text pipeline without the acoustic step (no aligned audio on the
+request). Marked text sounds natural
 only after fine-tuning on marked transcripts, so keep `STRESS_*` settings
 identical between training and serving.
 
@@ -376,7 +386,7 @@ Changing stress settings (or the lexicon) means re-exporting — there is no
 in-place backfill step:
 
 ```bash
-./run.sh train export   # rewrites .wav/.lab (drops existing VQ .npy next to them)
+./run.sh train export   # relinks .wav, rewrites .lab (drops existing VQ .npy next to them)
 ./run.sh train vq
 ./run.sh train protos
 # then retrain LoRA from the base checkpoint (continue is a weaker option)
@@ -395,12 +405,8 @@ models, forced onto CPU via `STRESS_PREFER_CPU` so the TTS GPU stays free).
 ./run.sh status              # datasets, checkpoints, GPU
 ```
 
-To serve the fine-tuned model via HTTP:
-
-```bash
-# .env
-FISH_SPEECH_USE_FINETUNED=true
-```
+To serve the fine-tuned model, export it for vLLM and point `FISH_SPEECH_MODEL`
+at the export (see *Fish Speech (vLLM-Omni)* above).
 
 Training hyperparameters: `TRAINING_*` variables in `.env`.
 
@@ -411,10 +417,13 @@ Single Python package `fish_studio`:
 ```
 src/fish_studio/
   config.py, paths.py, cli.py, synthesis.py   # shared config and types
+  stress.py, stress_align.py                  # stress marking; CTC alignment and accent measures
   dataset/          # YouTube/local → transcribe → segment → export
   training/         # LoRA pipeline (export, vq, protos, train, merge, infer)
   runtime/          # inference checkpoint paths, vLLM deploy helpers
-  server/           # FastAPI HTTP server + vLLM proxy
+  server/           # FastAPI HTTP server + vLLM proxy; uk_eval.py scores a served model
+scripts/            # ./run.sh entry points plus the uk-eval helpers (probe set,
+                    # held-out voices, per-token vowel and clone diagnostics)
 ```
 
 ## Tests
