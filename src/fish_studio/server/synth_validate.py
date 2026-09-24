@@ -1,13 +1,17 @@
-"""Reject obviously broken raw synthesis: silence, cutoff, or a drifted voice.
+"""Flag an obviously broken raw take: silence or a cutoff.
 
-Judged on the model WAV *before* pause/tempo fit, against the chunk text and
-the clone-prompt embedding. ``match_timing`` must not run first — stretch
-would hide a short take and would not fix a wrong speaker.
+Judged on the model WAV *before* pause/tempo fit, against the chunk text.
+``match_timing`` must not run first — stretch would hide a short take.
 
 The implied rate is syllables(text) / active_speech(wav). A cutoff leaves the
 full text in the numerator and only the spoken prefix in the denominator, so
 the rate jumps well above any real articulation. Valid fast speech stays under
-the ceiling; thin one-word lines skip the rate check but are still voice-scored.
+the ceiling; thin one-word lines skip the rate check.
+
+The server makes one take per chunk and reports what it saw: the verdict goes
+out as ``X-Synth-Warning`` and the clone cosine as ``X-Voice-Similarity``. What
+to do with a bad take — regenerate, keep, pick between takes — is the client's
+decision, with its own thresholds.
 """
 
 from __future__ import annotations
@@ -16,7 +20,6 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from fish_studio.server.voiceprint import VOICE_RETRY_BELOW, VOICE_WARN_BELOW
 from fish_studio.timing import count_syllables, measure_active_speech_sec, strip_nonspeech
 
 # Same thin-text floor as the timing fit — one-word lines are too noisy for rate.
@@ -29,9 +32,7 @@ _SILENCE_ACTIVE_SEC = 0.25
 _CUTOFF_SYL_PER_SEC = 10.0
 _PEAK_EPS = 1.0 / 32_768
 
-# Upper bound a request may ask for; the default is one take.
-MAX_SYNTH_ATTEMPTS = 8
-# ASCII headers on the WAV response so a client can log a kept-bad take.
+# ASCII header on the WAV response so a client can see a broken take.
 SYNTH_WARNING_HEADER = "X-Synth-Warning"
 
 
@@ -81,19 +82,9 @@ def judge_raw_synth(audio: np.ndarray, sample_rate: int, text: str) -> SynthChec
     return SynthCheck(True, "", syllables, active, implied)
 
 
-def attach_voice(
-    check: SynthCheck,
-    similarity: float | None,
-    *,
-    retry_below: float = VOICE_RETRY_BELOW,
-) -> SynthCheck:
-    """Fold clone cosine into a quality verdict. Short lines are scored too.
-
-    ``None`` means the clip could not be embedded (too short / encoder off) —
-    quality is left unchanged. Below ``retry_below`` a passing take becomes a
-    voice fail so the chunk loop retries.
-    """
-    tagged = SynthCheck(
+def attach_voice(check: SynthCheck, similarity: float | None) -> SynthCheck:
+    """Record the clone cosine on a verdict. ``None`` = the clip could not be embedded."""
+    return SynthCheck(
         ok=check.ok,
         reason=check.reason,
         syllables=check.syllables,
@@ -101,50 +92,6 @@ def attach_voice(
         implied_syl_per_sec=check.implied_syl_per_sec,
         voice_similarity=similarity,
     )
-    if not tagged.ok or similarity is None:
-        return tagged
-    if similarity < retry_below:
-        return SynthCheck(
-            False,
-            "voice",
-            tagged.syllables,
-            tagged.active_speech_sec,
-            tagged.implied_syl_per_sec,
-            similarity,
-        )
-    return tagged
-
-
-def pick_best_attempt(
-    attempts: list[tuple[np.ndarray, int, SynthCheck]],
-) -> tuple[np.ndarray, int, SynthCheck]:
-    """Prefer a passing take; otherwise speech with the strongest clone match."""
-    if not attempts:
-        raise ValueError("no synthesis attempts")
-    passing = [item for item in attempts if item[2].ok]
-    if passing:
-        return max(passing, key=_voice_key)
-
-    return max(attempts, key=_fail_key)
-
-
-def _voice_key(item: tuple[np.ndarray, int, SynthCheck]) -> tuple[float, float]:
-    check = item[2]
-    similarity = check.voice_similarity if check.voice_similarity is not None else -1.0
-    return (similarity, check.active_speech_sec)
-
-
-def _fail_key(item: tuple[np.ndarray, int, SynthCheck]) -> tuple[int, float, float, float]:
-    check = item[2]
-    if check.reason == "silence":
-        tier = 0
-    elif check.reason == "cutoff":
-        tier = 1
-    else:
-        # voice miss (or unknown) still has speech — keep it over a cutoff.
-        tier = 2
-    similarity = check.voice_similarity if check.voice_similarity is not None else -1.0
-    return (tier, similarity, check.active_speech_sec, -check.implied_syl_per_sec)
 
 
 def line_voice_similarity(reports: list[dict]) -> float | None:
@@ -157,47 +104,28 @@ def line_voice_similarity(reports: list[dict]) -> float | None:
     return min(scores) if scores else None
 
 
-def quality_warning(
-    reports: list[dict],
-    *,
-    warn_below: float = VOICE_WARN_BELOW,
-    default_attempts: int = MAX_SYNTH_ATTEMPTS,
-) -> str:
-    """Human-readable warning when a returned take is still broken or weakly cloned."""
+def quality_warning(reports: list[dict]) -> str:
+    """Human-readable warning when a returned take is silence or a cutoff."""
     parts: list[str] = []
     multi = len(reports) > 1
     for index, report in enumerate(reports, start=1):
-        detail = _warning_detail(report, warn_below=warn_below, default_attempts=default_attempts)
+        detail = _warning_detail(report)
         if not detail:
             continue
         parts.append(f"chunk {index}: {detail}" if multi else detail)
     return "; ".join(parts)
 
 
-def _warning_detail(
-    report: dict,
-    *,
-    warn_below: float = VOICE_WARN_BELOW,
-    default_attempts: int = MAX_SYNTH_ATTEMPTS,
-) -> str:
-    attempts = int(report.get("attempts") or default_attempts)
+def _warning_detail(report: dict) -> str:
+    if report.get("ok", True):
+        return ""
+    reason = str(report.get("reason") or "invalid")
+    implied = float(report.get("implied_syl_per_sec") or 0.0)
+    active = float(report.get("active_speech_sec") or 0.0)
     similarity = report.get("voice_similarity")
     sim_txt = "" if similarity is None else f", similarity {float(similarity):.2f}"
-    if not report.get("ok", True):
-        reason = str(report.get("reason") or "invalid")
-        implied = float(report.get("implied_syl_per_sec") or 0.0)
-        active = float(report.get("active_speech_sec") or 0.0)
-        if reason == "silence":
-            return f"silence after {attempts} attempts ({active:.2f}s active speech{sim_txt})"
-        if reason == "cutoff":
-            return (
-                f"cutoff after {attempts} attempts "
-                f"({implied:.1f} syl/s, {active:.2f}s active speech{sim_txt})"
-            )
-        if reason == "voice":
-            score = 0.0 if similarity is None else float(similarity)
-            return f"voice after {attempts} attempts (similarity {score:.2f})"
-        return f"{reason} after {attempts} attempts{sim_txt}"
-    if similarity is not None and float(similarity) < warn_below:
-        return f"weak voice ({float(similarity):.2f})"
-    return ""
+    if reason == "silence":
+        return f"silence ({active:.2f}s active speech{sim_txt})"
+    if reason == "cutoff":
+        return f"cutoff ({implied:.1f} syl/s, {active:.2f}s active speech{sim_txt})"
+    return f"{reason}{sim_txt}"

@@ -3,9 +3,9 @@
 Compares the raw take to the clone prompt (same model as the FO4 bench:
 ``speechbrain/spkrec-ecapa-voxceleb``). CPU by default so vLLM keeps the GPU.
 
-Calibrated on FO4 vanilla + ear: 0.30 is the usable-clone floor. Live values
-come from FISH_SPEECH_VOICE_RETRY_BELOW. Short lines are scored — they are
-cheap to regenerate.
+Calibrated on FO4 vanilla + ear: 0.30 is the usable-clone floor, but the
+server only reports the score (``X-Voice-Similarity``); what counts as too low
+is the client's threshold. Short lines are scored too.
 """
 
 from __future__ import annotations
@@ -20,9 +20,6 @@ logger = logging.getLogger(__name__)
 MODEL_ID = "speechbrain/spkrec-ecapa-voxceleb"
 TARGET_RATE = 16_000
 MIN_EMBED_SEC = 0.2
-# Defaults when .env does not override FISH_SPEECH_VOICE_RETRY_BELOW.
-VOICE_RETRY_BELOW = 0.30
-VOICE_WARN_BELOW = 0.30
 VOICE_SIMILARITY_HEADER = "X-Voice-Similarity"
 
 

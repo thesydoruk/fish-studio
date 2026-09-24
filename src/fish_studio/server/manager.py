@@ -6,7 +6,7 @@ import threading
 from typing import Any
 
 from fish_studio.runtime.vllm_health import check_vllm_http
-from fish_studio.server.references import MAX_REFERENCES, ReferenceClip
+from fish_studio.server.references import ReferenceClip
 from fish_studio.server.settings import ServerSettings
 from fish_studio.server.vllm_proxy import VllmFishProxy
 from fish_studio.synthesis import SynthesisResult
@@ -35,8 +35,6 @@ class EngineManager:
         language: str,
         references: list[ReferenceClip],
         match_timing: bool = True,
-        attempts: int = 1,
-        retry_below: float = 0.0,
     ) -> SynthesisResult:
         proxy = self.ensure_loaded()
         return proxy.synthesize(
@@ -44,8 +42,6 @@ class EngineManager:
             language=language,
             references=references,
             match_timing=match_timing,
-            attempts=attempts,
-            retry_below=retry_below,
         )
 
     def info(self) -> dict[str, Any]:

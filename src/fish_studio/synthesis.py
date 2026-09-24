@@ -12,7 +12,7 @@ class SynthesisResult:
     wav_bytes: bytes
     sample_rate: int
     language: str
-    # Set when the returned take is still silence, a cutoff, or a weak clone.
+    # Set when the returned take is silence or a cutoff.
     warning: str = ""
     # Weakest chunk cosine vs the clone prompt; None when the encoder is off.
     voice_similarity: float | None = None
