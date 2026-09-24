@@ -530,3 +530,11 @@
 за́хідних
 за́хідному
 за́хідній
+
+# Vulgar colloquialisms the dictionary stresses on the wrong vowel
+на́хер
+на́хера
+
+# Imperatives the dictionary reads as a name when they open a sentence
+# (capital І: "Іди сюди" came out as the genitive of Іда, І́ди)
+іди́
