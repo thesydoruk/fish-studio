@@ -29,7 +29,8 @@ _SILENCE_ACTIVE_SEC = 0.25
 _CUTOFF_SYL_PER_SEC = 10.0
 _PEAK_EPS = 1.0 / 32_768
 
-MAX_SYNTH_ATTEMPTS = 5
+# Upper bound a request may ask for; the default is one take.
+MAX_SYNTH_ATTEMPTS = 8
 # ASCII headers on the WAV response so a client can log a kept-bad take.
 SYNTH_WARNING_HEADER = "X-Synth-Warning"
 

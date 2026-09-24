@@ -52,6 +52,8 @@ Default port: `8080` (`INFERENCE_PORT` in `.env`).
 | `speaker_text`                    | no       | —                    | Reference transcript (recommended) |
 | `language`                        | no       | `INFERENCE_LANGUAGE` | Language code                      |
 | `match_timing`                    | no       | `true`               | Fit the first ref slot: pauses, then rate-limited PSOLA tempo |
+| `synth_attempts`                  | no       | `1`                  | Raw takes per chunk (1–8): a silent, cut-off or weak-clone take is generated again and the best is kept |
+| `voice_retry_below`               | no       | `0`                  | ECAPA cosine vs the clone prompt below which a take counts as a weak clone |
 
 Sampling (`temperature`, `top_p`, `repetition_penalty`) is fixed at vLLM startup
 in `configs/fish_speech_deploy.yaml`, not per request.
@@ -66,11 +68,13 @@ Each successful synthesize also dumps under `{DATA_ROOT}/logs/synthesis/` (see
 (before timing), `synth_final.wav` (returned audio). `LATEST` names the newest
 request id. Keep count: `FISH_SPEECH_SYNTH_LOG_KEEP` (default 40).
 
-Each chunk is retried up to `FISH_SPEECH_SYNTH_ATTEMPTS` times (default 5) if
-the raw take is silence, a cutoff, or the ECAPA cosine vs the clone prompt is
-below `FISH_SPEECH_VOICE_RETRY_BELOW` (default 0.3; short lines included).
-`X-Voice-Similarity` is the weakest chunk score. A take still below the
-threshold after every attempt is returned with `X-Synth-Warning`.
+Retries are the client's decision. With `synth_attempts` above 1, a chunk
+whose raw take is silence, a cutoff, or whose ECAPA cosine vs the clone prompt
+is below `voice_retry_below` is generated again and the best take is kept; a
+take still failing after every attempt comes back with `X-Synth-Warning`.
+`X-Voice-Similarity` (the weakest chunk score) is on every response, so a
+client can also judge and retry on its own side. transynth keeps both knobs
+in Settings → Voice → Synthesis and sends them with every request.
 
 ### Timing fit
 

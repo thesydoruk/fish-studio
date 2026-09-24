@@ -35,6 +35,8 @@ class EngineManager:
         language: str,
         references: list[ReferenceClip],
         match_timing: bool = True,
+        attempts: int = 1,
+        retry_below: float = 0.0,
     ) -> SynthesisResult:
         proxy = self.ensure_loaded()
         return proxy.synthesize(
@@ -42,6 +44,8 @@ class EngineManager:
             language=language,
             references=references,
             match_timing=match_timing,
+            attempts=attempts,
+            retry_below=retry_below,
         )
 
     def info(self) -> dict[str, Any]:

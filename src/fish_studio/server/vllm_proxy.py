@@ -101,7 +101,19 @@ class VllmFishProxy:
         language: str,
         references: list[ReferenceClip],
         match_timing: bool = True,
+        attempts: int = 1,
+        retry_below: float = 0.0,
     ) -> SynthesisResult:
+        """Synthesize ``text`` in the voice of ``references``.
+
+        ``attempts`` and ``retry_below`` belong to the caller: a chunk whose raw
+        take is silence, a cutoff, or whose ECAPA cosine against the clone
+        prompt is below ``retry_below`` is generated again up to ``attempts``
+        times and the best take is kept. The defaults make one attempt and
+        never judge the voice, so a client that wants retries asks for them.
+        """
+        attempts = max(1, int(attempts))
+        retry_below = min(1.0, max(0.0, float(retry_below)))
         client = self._client
         if not self._available or client is None:
             raise RuntimeError("Model is not loaded")
@@ -152,7 +164,14 @@ class VllmFishProxy:
             ref_embedding = self._voice.embed(clone_wav, clone_rate)
 
             pieces, sample_rate, quality = self._synthesize_chunks(
-                client, chunks, mime, ref_b64, reference_text, ref_embedding
+                client,
+                chunks,
+                mime,
+                ref_b64,
+                reference_text,
+                ref_embedding,
+                attempts=attempts,
+                retry_below=retry_below,
             )
             self._sample_rate = sample_rate
             raw = concat_audio_chunks(pieces, sample_rate) if len(pieces) > 1 else pieces[0]
@@ -181,15 +200,9 @@ class VllmFishProxy:
                         fit.stretch_rate,
                         text_raw,
                     )
-            loudness = match_loudness_to_reference(
-                timed, sample_rate, slot_ref, slot_rate
-            )
+            loudness = match_loudness_to_reference(timed, sample_rate, slot_ref, slot_rate)
             final = loudness.audio
-            warning = quality_warning(
-                quality,
-                warn_below=self.settings.voice_retry_below,
-                default_attempts=self.settings.synth_attempts,
-            )
+            warning = quality_warning(quality, warn_below=retry_below, default_attempts=attempts)
             voice_similarity = line_voice_similarity(quality)
             try:
                 self._synth_log.log(
@@ -235,6 +248,9 @@ class VllmFishProxy:
         ref_b64: str,
         reference_text: str,
         ref_embedding: list[float] | None,
+        *,
+        attempts: int = 1,
+        retry_below: float = 0.0,
     ) -> tuple[list[np.ndarray], int, list[dict]]:
         """Generate each sentence chunk; retry silence / cutoff / voice on that chunk only."""
         pieces: list[np.ndarray] = []
@@ -242,7 +258,14 @@ class VllmFishProxy:
         sample_rate = self._sample_rate
         for chunk in chunks:
             audio, sample_rate, report = self._synthesize_chunk_validated(
-                client, chunk, mime, ref_b64, reference_text, ref_embedding
+                client,
+                chunk,
+                mime,
+                ref_b64,
+                reference_text,
+                ref_embedding,
+                attempts=attempts,
+                retry_below=retry_below,
             )
             pieces.append(audio)
             quality.append(report)
@@ -256,10 +279,12 @@ class VllmFishProxy:
         ref_b64: str,
         reference_text: str,
         ref_embedding: list[float] | None = None,
+        *,
+        attempts: int = 1,
+        retry_below: float = 0.0,
     ) -> tuple[np.ndarray, int, dict]:
-        attempts: list[tuple[np.ndarray, int, SynthCheck]] = []
-        max_attempts = self.settings.synth_attempts
-        retry_below = self.settings.voice_retry_below
+        takes: list[tuple[np.ndarray, int, SynthCheck]] = []
+        max_attempts = max(1, attempts)
         for attempt in range(1, max_attempts + 1):
             audio, sample_rate = _decode_wav(
                 self._request_speech(client, chunk, mime, ref_b64, reference_text)
@@ -271,7 +296,7 @@ class VllmFishProxy:
                 else self._voice.similarity(audio, sample_rate, ref_embedding)
             )
             check = attach_voice(check, similarity, retry_below=retry_below)
-            attempts.append((audio, sample_rate, check))
+            takes.append((audio, sample_rate, check))
             if check.ok:
                 if attempt > 1:
                     logger.info(
@@ -284,11 +309,15 @@ class VllmFishProxy:
                         _sim_label(check.voice_similarity),
                         chunk,
                     )
-                return audio, sample_rate, {
-                    "attempts": attempt,
-                    "recovered": attempt > 1,
-                    **check.metrics(),
-                }
+                return (
+                    audio,
+                    sample_rate,
+                    {
+                        "attempts": attempt,
+                        "recovered": attempt > 1,
+                        **check.metrics(),
+                    },
+                )
             logger.warning(
                 "synth %s on attempt %d/%d (implied %.1f syl/s, active %.2fs, sim=%s): %r",
                 check.reason,
@@ -300,7 +329,7 @@ class VllmFishProxy:
                 chunk,
             )
 
-        audio, sample_rate, check = pick_best_attempt(attempts)
+        audio, sample_rate, check = pick_best_attempt(takes)
         logger.warning(
             "synth kept best failing take after %d attempts (%s, %.1f syl/s, sim=%s): %r",
             max_attempts,
@@ -309,11 +338,15 @@ class VllmFishProxy:
             _sim_label(check.voice_similarity),
             chunk,
         )
-        return audio, sample_rate, {
-            "attempts": max_attempts,
-            "recovered": False,
-            **check.metrics(),
-        }
+        return (
+            audio,
+            sample_rate,
+            {
+                "attempts": max_attempts,
+                "recovered": False,
+                **check.metrics(),
+            },
+        )
 
     def _request_speech(
         self,
@@ -359,8 +392,6 @@ class VllmFishProxy:
             "chunk_length": self.settings.chunk_length,
             "sample_rate": self._sample_rate,
             "default_language": self.settings.default_language,
-            "synth_attempts": self.settings.synth_attempts,
-            "voice_retry_below": self.settings.voice_retry_below,
             "synth_log": {
                 "enabled": self._synth_log.enabled,
                 "dir": str(self.settings.synth_log_dir) if self.settings.synth_log_dir else None,
@@ -393,14 +424,14 @@ class VllmFishProxy:
                     "budget first, then Praat PSOLA, limited to a plausible "
                     "syllables-per-second rate and at most 1.25×, never slower. "
                     "A line that still overruns is logged as needs_shorter_line "
-                    "rather than sped up further. Each chunk is retried up to "
-                    f"{self.settings.synth_attempts} times if the raw take is "
-                    "silence, implies an impossible syllable rate (cutoff), or "
-                    "the ECAPA cosine vs the clone prompt is below "
-                    f"{self.settings.voice_retry_below:.2f} (including short "
-                    "lines). A take still below that floor after every attempt "
-                    "is returned with X-Synth-Warning. X-Voice-Similarity is "
-                    "the weakest chunk cosine. "
+                    "rather than sped up further. Retries belong to the client: "
+                    "with synth_attempts > 1 a chunk whose raw take is silence, "
+                    "implies an impossible syllable rate (cutoff), or whose ECAPA "
+                    "cosine vs the clone prompt is below voice_retry_below is "
+                    "generated again and the best take is kept; a take still "
+                    "failing after every attempt comes back with X-Synth-Warning. "
+                    "X-Voice-Similarity is the weakest chunk cosine on every "
+                    "response, retries or not. "
                     "Right after synthesis, ffmpeg dynaudnorm evens ragged "
                     "syllable loudness; timing runs on that take; a linear "
                     "speech-gated LUFS gain then matches the first speaker_wav "

@@ -21,7 +21,7 @@ from fish_studio.server.references import (
     validate_reference_count,
 )
 from fish_studio.server.settings import ServerSettings
-from fish_studio.server.synth_validate import SYNTH_WARNING_HEADER
+from fish_studio.server.synth_validate import MAX_SYNTH_ATTEMPTS, SYNTH_WARNING_HEADER
 from fish_studio.server.voiceprint import VOICE_SIMILARITY_HEADER
 from fish_studio.synthesis import SynthesisResult
 
@@ -32,11 +32,17 @@ class JsonSynthesisRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=5000)
     language: str | None = None
     speaker_wav_b64: str | None = Field(default=None, min_length=1)
-    speaker_wav_b64_list: list[str] | None = Field(default=None, min_length=1, max_length=MAX_REFERENCES)
+    speaker_wav_b64_list: list[str] | None = Field(
+        default=None, min_length=1, max_length=MAX_REFERENCES
+    )
     speaker_wav_format: str = "wav"
     speaker_text: str | None = None
     speaker_texts: list[str] | None = Field(default=None, min_length=1, max_length=MAX_REFERENCES)
     match_timing: bool = True
+    # Retries are the client's call: how many raw takes per chunk, and the ECAPA
+    # cosine below which a take counts as a weak clone. 1 / 0 = one take, unjudged.
+    synth_attempts: int = Field(default=1, ge=1, le=MAX_SYNTH_ATTEMPTS)
+    voice_retry_below: float = Field(default=0.0, ge=0.0, le=1.0)
 
     @model_validator(mode="after")
     def _validate_reference_payload(self) -> JsonSynthesisRequest:
@@ -66,6 +72,32 @@ def synthesis_response_headers(result: SynthesisResult) -> dict[str, str]:
     if result.voice_similarity is not None:
         headers[VOICE_SIMILARITY_HEADER] = f"{result.voice_similarity:.3f}"
     return headers
+
+
+def _parse_attempts(value: int | str | None) -> int:
+    """Form ``synth_attempts``: omitted means one take."""
+    if value is None or value == "":
+        return 1
+    try:
+        attempts = int(str(value).strip())
+    except ValueError as exc:
+        raise ValueError(f"synth_attempts must be an integer, got {value!r}") from exc
+    if not 1 <= attempts <= MAX_SYNTH_ATTEMPTS:
+        raise ValueError(f"synth_attempts must be in 1..{MAX_SYNTH_ATTEMPTS}, got {attempts}")
+    return attempts
+
+
+def _parse_retry_below(value: float | str | None) -> float:
+    """Form ``voice_retry_below``: omitted means the voice is never judged."""
+    if value is None or value == "":
+        return 0.0
+    try:
+        threshold = float(str(value).strip())
+    except ValueError as exc:
+        raise ValueError(f"voice_retry_below must be a number, got {value!r}") from exc
+    if not 0.0 <= threshold <= 1.0:
+        raise ValueError(f"voice_retry_below must be in 0..1, got {threshold}")
+    return threshold
 
 
 def _parse_flag(value: bool | str | None, *, default: bool = True) -> bool:
@@ -182,7 +214,10 @@ def create_app(settings: ServerSettings) -> FastAPI:
         version="1.0.0",
         description="HTTP API for Fish Speech voice cloning via vLLM-Omni. Built with Fish Audio.",
         contact={"name": "Valerii Sydoruk", "url": "https://github.com/thesydoruk/fish-studio"},
-        license_info={"name": "MIT", "url": "https://github.com/thesydoruk/fish-studio/blob/main/LICENSE"},
+        license_info={
+            "name": "MIT",
+            "url": "https://github.com/thesydoruk/fish-studio/blob/main/LICENSE",
+        },
     )
 
     @app.get("/health", response_model=None)
@@ -203,10 +238,17 @@ def create_app(settings: ServerSettings) -> FastAPI:
         speaker_text: Annotated[str | None, Form()] = None,
         speaker_texts: Annotated[list[str] | None, Form()] = None,
         match_timing: Annotated[str | None, Form()] = None,
+        synth_attempts: Annotated[str | None, Form()] = None,
+        voice_retry_below: Annotated[str | None, Form()] = None,
     ) -> Response:
         lang = _default_language(settings, language)
         if not text.strip():
             raise HTTPException(status_code=400, detail="text must not be empty")
+        try:
+            attempts = _parse_attempts(synth_attempts)
+            retry_below = _parse_retry_below(voice_retry_below)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         if not speaker_wav:
             raise HTTPException(status_code=400, detail="at least one speaker_wav is required")
 
@@ -228,6 +270,8 @@ def create_app(settings: ServerSettings) -> FastAPI:
                 language=lang,
                 references=references,
                 match_timing=_parse_flag(match_timing),
+                attempts=attempts,
+                retry_below=retry_below,
             )
         except FileNotFoundError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -271,6 +315,8 @@ def create_app(settings: ServerSettings) -> FastAPI:
                 language=lang,
                 references=references,
                 match_timing=body.match_timing,
+                attempts=body.synth_attempts,
+                retry_below=body.voice_retry_below,
             )
         except FileNotFoundError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -5,8 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from fish_studio.server.settings import FishSpeechSettings
 from fish_studio.server.app import synthesis_response_headers
+from fish_studio.server.settings import FishSpeechSettings
 from fish_studio.server.synth_validate import (
     MAX_SYNTH_ATTEMPTS,
     SYNTH_WARNING_HEADER,
@@ -16,9 +16,9 @@ from fish_studio.server.synth_validate import (
     pick_best_attempt,
     quality_warning,
 )
+from fish_studio.server.vllm_proxy import VllmFishProxy, _encode_wav
 from fish_studio.server.voiceprint import VOICE_SIMILARITY_HEADER
 from fish_studio.synthesis import SynthesisResult
-from fish_studio.server.vllm_proxy import VllmFishProxy, _encode_wav
 from fish_studio.timing import count_syllables
 
 pytest.importorskip("numpy")
@@ -131,8 +131,6 @@ def _proxy() -> VllmFishProxy:
             default_language="uk",
             synth_log_enabled=False,
             synth_log_dir=None,
-            synth_attempts=5,
-            voice_retry_below=0.3,
         )
     )
 
@@ -151,6 +149,7 @@ def test_chunk_retries_silence_then_recovers(monkeypatch) -> None:
         mime="audio/wav",
         ref_b64="",
         reference_text="",
+        attempts=5,
     )
     assert report["ok"] is True
     assert report["recovered"] is True
@@ -306,9 +305,7 @@ def test_quality_warning_describes_voice() -> None:
 
 
 def test_quality_warning_weak_but_accepted() -> None:
-    text = quality_warning(
-        [{"ok": True, "reason": "", "voice_similarity": 0.27, "attempts": 1}]
-    )
+    text = quality_warning([{"ok": True, "reason": "", "voice_similarity": 0.27, "attempts": 1}])
     assert text == "weak voice (0.27)"
 
 
@@ -338,6 +335,8 @@ def test_chunk_retries_voice_then_recovers(monkeypatch) -> None:
         ref_b64="",
         reference_text="",
         ref_embedding=[1.0],
+        attempts=5,
+        retry_below=0.3,
     )
     assert report["ok"] is True
     assert report["recovered"] is True
@@ -363,9 +362,33 @@ def test_chunk_keeps_best_after_all_fail(monkeypatch) -> None:
         mime="audio/wav",
         ref_b64="",
         reference_text="",
+        attempts=MAX_SYNTH_ATTEMPTS,
+        retry_below=0.3,
     )
     assert report["ok"] is False
     assert report["reason"] == "silence"
     assert report["attempts"] == MAX_SYNTH_ATTEMPTS
     assert report["recovered"] is False
     assert calls["n"] == MAX_SYNTH_ATTEMPTS
+
+
+def test_one_take_by_default_even_when_it_is_silence(monkeypatch) -> None:
+    """Retries belong to the client: a request that asks for none gets one take back."""
+    proxy = _proxy()
+    calls = {"n": 0}
+
+    def _fake_speech(*_args, **_kwargs) -> bytes:
+        calls["n"] += 1
+        return _encode_wav(_silence(1.0), SAMPLE_RATE)
+
+    monkeypatch.setattr(proxy, "_request_speech", _fake_speech)
+    _, _, report = proxy._synthesize_chunk_validated(
+        client=None,  # type: ignore[arg-type]
+        chunk=LINE,
+        mime="audio/wav",
+        ref_b64="",
+        reference_text="",
+    )
+    assert calls["n"] == 1
+    assert report["ok"] is False
+    assert report["attempts"] == 1
