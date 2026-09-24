@@ -430,3 +430,25 @@ def test_needs_stress_fill_only_for_bare_words_with_two_or_more_vowels():
     assert needs_stress_fill("\u0433\u043e\u0440\u0430\u0301") is False  # marked
     assert needs_stress_fill("\u0433\u043e\u0440\u0430") is True  # bare, two vowels
     assert needs_stress_fill("\u0442\u0430\u043a \u0456") is False  # one-vowel words only
+
+
+def test_measure_rhotic_reports_f3_of_each_r_against_its_vowel(monkeypatch):
+    import fish_studio.stress_align as module
+
+    def fake_f3(samples, rate, t0, t1):
+        # р spans start at 0.0 / 0.30; vowels follow. Make the first р an approximant.
+        return 1600.0 if (t0 == 0.0) else (2400.0 if t0 == 0.30 else 2500.0)
+
+    monkeypatch.setattr(module, "_f3_between", fake_f3)
+    spans = [
+        VowelSpan(word_index=0, vowel_ordinal=-1, char="р", start=0.0, end=0.02),
+        VowelSpan(word_index=0, vowel_ordinal=0, char="а", start=0.05, end=0.07, filled_end=0.2),
+        VowelSpan(word_index=-1, vowel_ordinal=-1, char=" ", start=0.2, end=0.21),
+        VowelSpan(word_index=1, vowel_ordinal=-1, char="р", start=0.30, end=0.32),
+        VowelSpan(word_index=1, vowel_ordinal=0, char="у", start=0.35, end=0.37, filled_end=0.5),
+        VowelSpan(word_index=1, vowel_ordinal=-1, char="р", start=0.5, end=0.52),  # word-final р
+    ]
+    out = module.measure_rhotic(
+        "ра ру", np.zeros(16_000, dtype=np.float32), 16_000, _StubAligner(spans)
+    )
+    assert out == [1600.0 / 2500.0, 2400.0 / 2500.0]

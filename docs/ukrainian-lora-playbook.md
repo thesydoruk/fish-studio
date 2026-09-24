@@ -420,6 +420,7 @@ as the ceiling (`h…`), never 100%:
 | `palatal`, `trill` | «р»: F2 at the release into the vowel; trill duration, r/v level, closures, share of weak trills |
 | `pitch` | F0 σ and 5–95 range in semitones |
 | `vowel` | median F1/F2 of «и» and «і» and the distance between them |
+| `rhotic` | share of «р» whose F3 drops below 0.8 of the following vowel's: the English approximant [ɹ] a listener hears as a soft «р» |
 
 Two things this set cannot show: intonation is flatter than native speech for
 every fine-tune (range ~10 st against 12.7) and does not move with the merge,

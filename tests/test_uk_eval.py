@@ -15,6 +15,7 @@ from fish_studio.server.uk_eval import (
     evaluate_voices,
     load_probes,
     load_voices,
+    rhotic_summary,
     score_audio,
     trill_weak_share,
     vowel_summary,
@@ -404,3 +405,18 @@ def test_report_prints_the_vowel_line_with_the_human_distance():
     report.human_vowels = {"и": [(560.0, 1650.0)], "і": [(290.0, 2350.0)]}
     line = report.format()
     assert "vowel   и:540/1725  і:300/2300  dF2=+575 dF1=+240  (h dF2=+700 dF1=+270)" in line
+
+
+def test_rhotic_summary_counts_approximants_below_the_ratio():
+    summary = rhotic_summary([0.6, 0.79, 0.8, 0.95, 1.02])
+    assert summary == {"approximant": pytest.approx(0.4), "ratio": pytest.approx(0.8), "n": 5}
+    assert rhotic_summary([]) is None
+
+
+def test_report_prints_the_rhotic_line_with_the_human_share():
+    report = Report(label="cand")
+    report.stress.hits, report.stress.total = 70, 100
+    report.rhotic = [0.6, 0.9, 1.0, 1.0]
+    report.human_rhotic = [0.95, 1.0, 1.05]
+    line = report.format()
+    assert "rhotic  approximant=25% ratio=0.95  (h 0%/1.00)" in line

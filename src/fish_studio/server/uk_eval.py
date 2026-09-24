@@ -38,12 +38,14 @@ from fish_studio.config import StressConfig
 from fish_studio.project_context import try_load_project, workspace_or_default
 from fish_studio.server.voiceprint import VoiceEncoder
 from fish_studio.stress_align import (
+    RHOTIC_APPROXIMANT_RATIO,
     CtcAligner,
     marked_ordinals,
     measure_gop,
     measure_margins,
     measure_palatalization,
     measure_pitch_spread,
+    measure_rhotic,
     measure_stress,
     measure_trill,
     measure_vowel_formants,
@@ -154,6 +156,18 @@ def trill_weak_share(feats: list[dict[str, float]]) -> float:
     return weak / len(feats)
 
 
+def rhotic_summary(ratios: list[float]) -> dict[str, float] | None:
+    """Share of р tokens that are English-style approximants, plus the median F3 ratio."""
+    if not ratios:
+        return None
+    values = np.asarray(ratios, dtype=np.float64)
+    return {
+        "approximant": float((values < RHOTIC_APPROXIMANT_RATIO).mean()),
+        "ratio": float(np.median(values)),
+        "n": int(values.size),
+    }
+
+
 def vowel_summary(
     vowels: dict[str, list[tuple[float, float]]],
 ) -> dict[str, float] | None:
@@ -213,6 +227,10 @@ class Report:
     # model that reads и as і collapses. Human lines give the native distance.
     vowels: dict[str, list[tuple[float, float]]] = field(default_factory=dict)
     human_vowels: dict[str, list[tuple[float, float]]] = field(default_factory=dict)
+    # F3 of each р against its vowel: below 0.8 the р is an English approximant,
+    # the one thing a listener hears as "soft р" that no other measure ranked.
+    rhotic: list[float] = field(default_factory=list)
+    human_rhotic: list[float] = field(default_factory=list)
     lines: int = 0
     align_failed: int = 0
     synth_failed: int = 0
@@ -273,6 +291,18 @@ class Report:
                 cells.append(cell)
             gop_line += (
                 f"\n{'':<14} trill   {'  '.join(cells)}  [dur/r-v level/closures/weak share]"
+            )
+        mine_rh = rhotic_summary(self.rhotic)
+        if mine_rh is not None:
+            theirs_rh = rhotic_summary(self.human_rhotic)
+            human = (
+                ""
+                if theirs_rh is None
+                else f"  (h {100 * theirs_rh['approximant']:.0f}%/{theirs_rh['ratio']:.2f})"
+            )
+            gop_line += (
+                f"\n{'':<14} rhotic  approximant={100 * mine_rh['approximant']:.0f}% "
+                f"ratio={mine_rh['ratio']:.2f}{human}  [р with F3/F3(vowel)<0.8; n={mine_rh['n']}]"
             )
         if self.pitch:
             std = float(np.median([p["f0_std_st"] for p in self.pitch]))
@@ -388,6 +418,7 @@ def score_audio(
     palatal_sink: dict[str, list[float]] | None = None,
     trill_sink: dict[str, list[dict[str, float]]] | None = None,
     vowel_sink: dict[str, list[tuple[float, float]]] | None = None,
+    rhotic_sink: list[float] | None = None,
 ) -> bool:
     """Score one take. False when alignment gave nothing to score."""
     heard = measure_stress(text, samples, rate, aligner)
@@ -413,6 +444,8 @@ def score_audio(
         vowels = measure_vowel_formants(text, samples, rate, aligner)
         for key, values in (vowels or {}).items():
             vowel_sink.setdefault(key, []).extend(values)
+    if rhotic_sink is not None:
+        rhotic_sink.extend(measure_rhotic(text, samples, rate, aligner) or [])
     for word_index, want in expected.items():
         got = heard.get(word_index)
         if got is not None:
@@ -544,6 +577,7 @@ def evaluate(
                 palatal_sink=report.palatal,
                 trill_sink=report.trill,
                 vowel_sink=report.vowels,
+                rhotic_sink=report.rhotic,
             ):
                 report.align_failed += 1
 
@@ -575,6 +609,7 @@ def evaluate(
                     palatal_sink=report.human_palatal,
                     trill_sink=report.human_trill,
                     vowel_sink=report.human_vowels,
+                    rhotic_sink=report.human_rhotic,
                 )
                 if reference:
                     similarity = encoder.similarity(human_samples, human_rate, reference)
@@ -749,6 +784,8 @@ def main(argv: list[str] | None = None) -> int:
             "human_trill_tokens": report.human_trill,
             "vowels": vowel_summary(report.vowels),
             "human_vowels": vowel_summary(report.human_vowels),
+            "rhotic": rhotic_summary(report.rhotic),
+            "human_rhotic": rhotic_summary(report.human_rhotic),
             "pitch": {
                 "f0_std_st": round(float(np.median([p["f0_std_st"] for p in report.pitch])), 2),
                 "f0_range_st": round(float(np.median([p["f0_range_st"] for p in report.pitch])), 2),

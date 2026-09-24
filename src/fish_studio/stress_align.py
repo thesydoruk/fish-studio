@@ -32,6 +32,7 @@ TARGET_RATE = 16_000
 FRAME_SEC = 320 / TARGET_RATE
 
 _VOWELS = set("аеєиіїоуюя")
+_VOWELS_ALL = "аеєиіїоуюя"
 # Same token shape as stress.py so word indexes line up across modules.
 _WORD_RE = re.compile(r"[A-Za-zА-Яа-яЁёІіЇїЄєҐґ'’ʼ́-]+", re.UNICODE)
 _APOSTROPHES = {"’", "‘", "ʼ", "＇", "`"}
@@ -660,6 +661,71 @@ def measure_vowel_formants(
         if pair is None:
             continue
         out.setdefault(span.char, []).append(pair)
+    return out
+
+
+def _f3_between(samples: np.ndarray, sample_rate: int, t0: float, t1: float) -> float | None:
+    """Median F3 (Hz) over [t0, t1], tracked on a padded slice so Burg has context."""
+    pad = 0.03
+    lo = max(0, int((t0 - pad) * sample_rate))
+    hi = min(samples.size, int((t1 + pad) * sample_rate))
+    if hi - lo < sample_rate // 50 or t1 <= t0:
+        return None
+    try:
+        import parselmouth
+    except ImportError:
+        return None
+    try:
+        sound = parselmouth.Sound(samples[lo:hi].astype(np.float64), sampling_frequency=sample_rate)
+        formant = sound.to_formant_burg(
+            time_step=0.005, max_number_of_formants=5, maximum_formant=5500
+        )
+        offset = lo / sample_rate
+        times = np.arange(t0 - offset + 0.005, t1 - offset, 0.005)
+        values = np.array([formant.get_value_at_time(3, t) for t in times], dtype=np.float64)
+    except Exception:
+        return None
+    values = values[np.isfinite(values)]
+    return float(np.median(values)) if values.size else None
+
+
+RHOTIC_APPROXIMANT_RATIO = 0.8
+
+
+def measure_rhotic(
+    text: str,
+    samples: np.ndarray,
+    sample_rate: int,
+    aligner: CtcAligner,
+    *,
+    vowels: str = _VOWELS_ALL,
+) -> list[float] | None:
+    """F3 of every р relative to the vowel that follows it, one ratio per token.
+
+    A Ukrainian trill keeps its third formant near the vowel's (ratio ~1). The
+    English approximant [ɹ] pulls F3 far down, below 2 kHz in most voices, and
+    that is what a listener hears as a soft р from a voice cloned off an
+    English prompt. The trill features, the palatal glide posterior and the
+    F2 index all missed it; the F3 ratio is the one measure that ranked the
+    voices the listener named. Below ``RHOTIC_APPROXIMANT_RATIO`` a token
+    counts as an approximant.
+    """
+    spans = aligner.align(text, samples, sample_rate)
+    if spans is None:
+        return None
+    out: list[float] = []
+    for previous, span in itertools.pairwise(spans):
+        if previous.char != "р" or span.word_index != previous.word_index:
+            continue
+        if span.vowel_ordinal < 0 or span.char not in vowels:
+            continue
+        r_end = span.start if span.start - previous.start >= 0.02 else previous.start + 0.03
+        f3_r = _f3_between(samples, sample_rate, previous.start, r_end)
+        vowel_end = min(max(span.filled_end, span.end), span.start + 0.08)
+        f3_v = _f3_between(samples, sample_rate, span.start, vowel_end)
+        if f3_r is None or f3_v is None or f3_v <= 0:
+            continue
+        out.append(f3_r / f3_v)
     return out
 
 
