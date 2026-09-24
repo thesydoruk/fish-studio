@@ -30,12 +30,34 @@ _RATE_SAMPLE_ROWS = 20
 
 @dataclass(frozen=True)
 class HFSource:
-    """One Hugging Face dataset repo mapped to a single speaker."""
+    """One Hugging Face dataset repo mapped to a speaker, or to speaker groups.
+
+    A repo that ships its audio as an archive plus a manifest (no ``audio``
+    column to stream) is read through ``archive`` / ``manifest``; the row's
+    ``audio_field`` names the file inside the archive. ``group_regex``, matched
+    against that field, turns its first group into a per-row speaker suffix,
+    so a podcast episode becomes ``{speaker}-{episode}`` for
+    ``cluster-speakers`` to split into voices.
+    """
 
     repo_id: str
     speaker: str
     config_name: str | None = None
     split: str = "train"
+    archive: str | None = None
+    manifest: str | None = None
+    audio_field: str = "audio_filepath"
+    group_regex: str | None = None
+
+    def row_speaker(self, row: dict[str, Any]) -> str:
+        if not self.group_regex:
+            return self.speaker
+        value = str(row.get(self.audio_field) or "")
+        match = re.search(self.group_regex, value)
+        if not match:
+            return self.speaker
+        key = match.group(1) if match.groups() else match.group(0)
+        return f"{self.speaker}-{_slugify(key)[:12]}"
 
     @property
     def label(self) -> str:
@@ -169,7 +191,43 @@ def wav_duration(path: Path) -> float | None:
     return frames / rate if rate else None
 
 
-def _load_rows(source: HFSource, *, streaming: bool = False) -> Iterator[dict[str, Any]]:
+def _archive_rows(source: HFSource, cache_dir: Path) -> Iterator[dict[str, Any]]:
+    """Rows of an archive-backed repo: the manifest's rows with ``audio`` pointing into the extracted tree."""
+    import tarfile
+
+    from huggingface_hub import hf_hub_download
+
+    assert source.archive and source.manifest
+    root = cache_dir / _slugify(source.repo_id)
+    root.mkdir(parents=True, exist_ok=True)
+    archive = Path(hf_hub_download(source.repo_id, source.archive, repo_type="dataset"))
+    manifest = Path(hf_hub_download(source.repo_id, source.manifest, repo_type="dataset"))
+    marker = root / f".extracted-{_slugify(source.archive)}"
+    if not marker.is_file():
+        with tarfile.open(archive) as tar:
+            tar.extractall(root, filter="data")
+        marker.write_text(str(archive), encoding="utf-8")
+    raw = manifest.read_text(encoding="utf-8")
+    rows = (
+        json.loads(raw)
+        if raw.lstrip().startswith("[")
+        else [json.loads(line) for line in raw.splitlines() if line.strip()]
+    )
+    for row in rows:
+        rel = str(row.get(source.audio_field) or "")
+        if not rel:
+            continue
+        yield {**row, "audio": {"path": str(root / rel)}}
+
+
+def _load_rows(
+    source: HFSource, *, streaming: bool = False, cache_dir: Path | None = None
+) -> Iterator[dict[str, Any]]:
+    if source.archive:
+        if cache_dir is None:
+            raise ValueError("archive sources need a cache_dir to extract into")
+        return _archive_rows(source, cache_dir)
+
     from datasets import Audio, load_dataset
 
     dataset = load_dataset(
@@ -241,6 +299,7 @@ def import_sources(
     batch_size: int = 512,
     force: bool = False,
     progress: Any | None = None,
+    cache_dir: Path | None = None,
 ) -> ImportStats:
     """Download, filter and convert HF datasets into ``output_dir``."""
     if not sources:
@@ -305,7 +364,7 @@ def import_sources(
                         source_stats.skipped_audio += 1
             pending = []
 
-        for row in _load_rows(source, streaming=streaming):
+        for row in _load_rows(source, streaming=streaming, cache_dir=cache_dir):
             # Datasets that ship an ASR quality proxy let us drop misaligned rows.
             wer = row.get("wer")
             if max_wer is not None and isinstance(wer, (int, float)) and wer > max_wer:
@@ -340,7 +399,7 @@ def import_sources(
             record = _Record(
                 file_id=file_id,
                 text=text,
-                speaker=source.speaker,
+                speaker=source.row_speaker(row),
                 duration=0.0,
             )
             pending.append((wavs_dir / f"{file_id}.wav", data, record))
@@ -398,7 +457,9 @@ def import_sources(
     )
 
 
-def _split_rows(records: list[_Record], export: ExportConfig) -> tuple[list[_Record], list[_Record]]:
+def _split_rows(
+    records: list[_Record], export: ExportConfig
+) -> tuple[list[_Record], list[_Record]]:
     shuffled = records[:]
     random.Random(export.seed).shuffle(shuffled)
 

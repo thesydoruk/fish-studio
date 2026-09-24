@@ -71,8 +71,10 @@ def to_mono_16k(audio: np.ndarray, sample_rate: int) -> np.ndarray:
 class VoiceEncoder:
     """Lazy SpeechBrain ECAPA encoder. Safe to construct when the extra is missing."""
 
-    def __init__(self, model_dir: Path | None = None) -> None:
+    def __init__(self, model_dir: Path | None = None, *, device: str = "cpu") -> None:
         self.model_dir = Path(model_dir) if model_dir is not None else _default_model_dir()
+        # CPU by default so the serving GPU stays vLLM's; dataset clustering asks for cuda.
+        self.device = device
         self._classifier = None
         self._unavailable = ""
 
@@ -133,7 +135,7 @@ class VoiceEncoder:
             self._classifier = EncoderClassifier.from_hparams(
                 source=MODEL_ID,
                 savedir=str(self.model_dir),
-                run_opts={"device": "cpu"},
+                run_opts={"device": self.device},
             )
         except Exception as exc:
             self._unavailable = str(exc)

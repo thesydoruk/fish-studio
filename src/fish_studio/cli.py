@@ -10,7 +10,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from fish_studio.config import ProjectConfig, load_config, _slugify_source_id
+from fish_studio.config import ProjectConfig, _slugify_source_id, load_config
 from fish_studio.dataset.export import clear_dataset_dir
 from fish_studio.dataset.hf_import import import_sources, parse_source, probe_sources
 from fish_studio.dataset.merge import (
@@ -397,6 +397,106 @@ def export_cmd(config_path: str, source_ids: tuple[str, ...], force: bool) -> No
     _single_step_cmd(config_path, "export", source_ids, force)
 
 
+@main.command("cluster-speakers")
+@click.option("-c", "--config", "config_path", default=".env")
+@click.option(
+    "-o", "--output", "dataset_id", required=True, help="Dataset slug to rewrite in place"
+)
+@click.option(
+    "--threshold",
+    type=float,
+    default=0.35,
+    show_default=True,
+    help="Centroid cosine above which two clip clusters are one voice",
+)
+@click.option("--min-clips", type=int, default=20, show_default=True)
+@click.option("--min-seconds", type=float, default=60.0, show_default=True)
+@click.option(
+    "--only",
+    "only_groups",
+    multiple=True,
+    help="Restrict to these speaker groups (calibration); repeatable",
+)
+@click.option("--sample", type=int, default=0, help="Embed at most N clips per group (calibration)")
+@click.option(
+    "--dry-run", is_flag=True, help="Report the voices each group would split into; write nothing"
+)
+@click.option(
+    "--device", default="cpu", show_default=True, help="Torch device for the ECAPA encoder"
+)
+def cluster_speakers_cmd(
+    config_path: str,
+    dataset_id: str,
+    threshold: float,
+    min_clips: int,
+    min_seconds: float,
+    only_groups: tuple[str, ...],
+    sample: int,
+    dry_run: bool,
+    device: str,
+) -> None:
+    """Split each speaker group of an imported dataset into voices by ECAPA embedding."""
+    import numpy as np
+    import soundfile as sf
+
+    from fish_studio.dataset.cluster_speakers import cluster_dataset_speakers
+    from fish_studio.server.voiceprint import VoiceEncoder
+
+    project = load_config(config_path)
+    dataset_dir = project.workspace().dataset_dir(dataset_id)
+    if not (dataset_dir / "metadata_train.csv").is_file():
+        raise click.ClickException(f"no metadata_train.csv under {dataset_dir}")
+    console = Console()
+    encoder = VoiceEncoder(device=device)
+    encoder.warmup()
+    if not encoder.available:
+        raise click.ClickException("speechbrain ECAPA encoder is not available")
+
+    def embed(path: Path) -> np.ndarray | None:
+        try:
+            samples, rate = sf.read(str(path), dtype="float32", always_2d=False)
+        except Exception:  # noqa: BLE001 - an unreadable clip is simply not embedded
+            return None
+        if getattr(samples, "ndim", 1) > 1:
+            samples = samples.mean(axis=1)
+        vector = encoder.embed(samples, rate)
+        return None if vector is None else np.asarray(vector, dtype=np.float32)
+
+    def on_group(group: str, index: int, total: int) -> None:
+        if index % 10 == 0 or index == total:
+            console.print(f"[dim]{index}/{total} groups[/dim]")
+
+    stats = cluster_dataset_speakers(
+        dataset_dir,
+        embed=embed,
+        threshold=threshold,
+        min_clips=min_clips,
+        min_seconds=min_seconds,
+        only_groups=set(only_groups) or None,
+        sample=sample,
+        dry_run=dry_run,
+        progress=on_group,
+    )
+    table = Table(
+        title=("Would split" if dry_run else "Split") + f" {dataset_dir.name} at cosine {threshold}"
+    )
+    table.add_column("Group")
+    table.add_column("Voices (clips / seconds)")
+    for group, report in sorted(stats.per_group.items()):
+        cells = [
+            f"{voice.rsplit('_', 1)[-1]}: {clips} / {seconds:.0f}s"
+            + ("" if clips >= min_clips and seconds >= min_seconds else " (dropped)")
+            for voice, clips, seconds in report
+        ]
+        table.add_row(group, "  ".join(cells))
+    console.print(table)
+    console.print(
+        f"groups={stats.groups} voices kept={stats.voices_kept} dropped={stats.voices_dropped} "
+        f"clips kept={stats.clips_kept}/{stats.clips_total} unembeddable={stats.clips_unembeddable}"
+        + ("  (dry run, nothing written)" if dry_run else "")
+    )
+
+
 @main.command("hf-import")
 @click.option("-c", "--config", "config_path", default=".env")
 @click.option(
@@ -427,6 +527,22 @@ def export_cmd(config_path: str, source_ids: tuple[str, ...], force: bool) -> No
 )
 @click.option("--force", is_flag=True, help="Re-import sources that already have a manifest")
 @click.option("--probe", is_flag=True, help="Report source audio specs without importing")
+@click.option(
+    "--archive",
+    help="Repo file holding the audio (tar/tar.gz) for repos with no audio column",
+)
+@click.option("--manifest", help="Repo file (json / jsonl) listing the rows of --archive")
+@click.option(
+    "--audio-field",
+    default="audio_filepath",
+    show_default=True,
+    help="Manifest field with the audio path inside --archive",
+)
+@click.option(
+    "--group-regex",
+    help="Regex on the audio field; its first group becomes a per-row speaker suffix "
+    "(one folder per podcast episode, say) for `cluster-speakers` to split into voices",
+)
 def hf_import_cmd(
     config_path: str,
     source_specs: tuple[str, ...],
@@ -436,13 +552,28 @@ def hf_import_cmd(
     streaming: bool,
     force: bool,
     probe: bool,
+    archive: str | None,
+    manifest: str | None,
+    audio_field: str,
+    group_regex: str | None,
 ) -> None:
     """Import Hugging Face speech datasets into a pipe-delimited dataset."""
     project = load_config(config_path)
     console = Console()
 
+    if bool(archive) != bool(manifest):
+        raise click.ClickException("--archive and --manifest go together")
     try:
-        sources = [parse_source(spec) for spec in source_specs]
+        sources = [
+            replace(
+                parse_source(spec),
+                archive=archive,
+                manifest=manifest,
+                audio_field=audio_field,
+                group_regex=group_regex,
+            )
+            for spec in source_specs
+        ]
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -479,6 +610,7 @@ def hf_import_cmd(
     stats = import_sources(
         sources,
         output_dir,
+        cache_dir=project.workspace().data_root / "work" / "hf",
         segmentation=project.segmentation,
         export=project.export,
         max_wer=max_wer,
