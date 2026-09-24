@@ -35,8 +35,9 @@ def run_ffmpeg(
     input: bytes | str | None = None,
     text: bool = False,
     check: bool = False,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]:
-    return _run(ffmpeg_cmd(*args), input=input, text=text, check=check)
+    return _run(ffmpeg_cmd(*args), input=input, text=text, check=check, timeout=timeout)
 
 
 def run_ffprobe(
@@ -55,12 +56,14 @@ def _run(
     input: bytes | str | None,
     text: bool,
     check: bool,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]:
     kwargs: dict[str, object] = {
         "args": cmd,
         "capture_output": True,
         "text": text,
         "check": check,
+        "timeout": timeout,
     }
     if input is None:
         # Close stdin even with -nostdin: some builds still peek at it.

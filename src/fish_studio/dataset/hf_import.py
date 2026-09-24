@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import random
 import re
+import subprocess
 import wave
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
@@ -172,11 +173,22 @@ def probe_audio(data: bytes) -> tuple[int | None, float | None]:
     return (int(rate) if rate else None, float(duration) if duration else None)
 
 
+# Sixteen converter threads spawning ffmpeg at once: an import of 23k clips
+# hung with one worker forever in communicate() on pipes no live ffmpeg held.
+# A clip is seconds of audio; a minute is already a broken pipe, not a slow one.
+_CONVERT_TIMEOUT_SEC = 60.0
+
+
 def _write_wav(data: bytes, dest: Path, segmentation: SegmentationConfig) -> bool:
-    proc = run_ffmpeg(
-        ["-y", "-i", "pipe:0", *ffmpeg_output_args(segmentation), str(dest)],
-        input=data,
-    )
+    try:
+        proc = run_ffmpeg(
+            ["-y", "-i", "pipe:0", *ffmpeg_output_args(segmentation), str(dest)],
+            input=data,
+            timeout=_CONVERT_TIMEOUT_SEC,
+        )
+    except subprocess.TimeoutExpired:
+        dest.unlink(missing_ok=True)
+        return False
     return proc.returncode == 0 and dest.is_file()
 
 
