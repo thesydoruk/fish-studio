@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 COMBINING_ACUTE = "\u0301"
 _LOGGER = logging.getLogger(__name__)
 
+
 def _preserve_case(template: str, replacement: str) -> str:
     """Copy capitalisation from ``template`` onto ``replacement`` (keeps ')."""
     if template.isupper():
@@ -191,6 +192,7 @@ def normalize_uk_text(text: str) -> str:
     text = re.sub(r"(?<=[А-Яа-яІіЇїЄєҐґA-Za-z])\u00b4", COMBINING_ACUTE, text)
     text = text.replace("\u00b4", "'")
     for pattern, repl in _APOSTROPHE_FIXES:
+
         def _sub(match: re.Match[str], *, _repl: str = repl) -> str:
             return _preserve_case(match.group(1), _repl)
 
@@ -583,12 +585,11 @@ def _reaccent_context_homonyms(text: str) -> str:
             if prev in _LOCK_BEFORE_ZAMOK:
                 word = _match_case(word, "замо́к")
             elif prev in _CASTLE_BEFORE_ZAMOK or (
-                strip_stress_marks(word)[:1].isupper()
-                and strip_stress_marks(word)[1:].islower()
+                strip_stress_marks(word)[:1].isupper() and strip_stress_marks(word)[1:].islower()
             ):
                 word = _match_case(word, "за́мок")
 
-        out.append(text[last:match.start()])
+        out.append(text[last : match.start()])
         out.append(word)
         last = match.end()
     out.append(text[last:])
@@ -638,7 +639,8 @@ def stressify(
     """Apply stress marks according to project config, or pass text through.
 
     When ``audio_path`` is set and ``config.acoustic_fallback`` is enabled, words
-    still unmarked after dictionary/Stanza/lexicon are filled from WAV energy.
+    still unmarked after dictionary/Stanza/lexicon are read off the recording by
+    forced alignment, and only marked where the verdict is confident.
     Synthesis callers omit ``audio_path``.
     """
     if not config.enabled:
@@ -658,7 +660,12 @@ def stressify(
         force=force,
     )
     if audio_path is not None and config.acoustic_fallback:
-        from fish_studio.stress_acoustic import apply_acoustic_stress
+        from fish_studio.stress_align import fill_stress_from_audio
 
-        marked = apply_acoustic_stress(marked, audio_path)
+        marked = fill_stress_from_audio(
+            marked,
+            audio_path,
+            min_margin=config.acoustic_margin,
+            device=config.acoustic_device,
+        )
     return marked

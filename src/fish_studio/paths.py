@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -79,3 +81,18 @@ class WorkspacePaths:
             self.logs_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)
+
+
+def link_or_copy(src: Path, dst: Path) -> None:
+    """Hard-link ``src`` at ``dst`` when the filesystem allows it, copy otherwise.
+
+    Dataset merge and training export both lay the corpus out again under a new
+    name; a second copy of tens of gigabytes buys nothing, because nothing
+    downstream rewrites a clip in place.
+    """
+    if dst.exists():
+        dst.unlink()
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)

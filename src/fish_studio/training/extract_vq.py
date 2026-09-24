@@ -12,6 +12,18 @@ from fish_studio.training.layout import ensure_training_dirs, resolve_base_check
 from fish_studio.training.upstream import run_fish_command
 
 
+def clips_without_tokens(input_dir: Path) -> list[Path]:
+    """Every wav under ``input_dir`` that has no ``.npy`` beside it.
+
+    Upstream's extractor exits 0 when its workers die (an OOM at batch 16 x 4
+    workers left 196k clips without tokens and a green exit code), so the
+    wrapper checks the result instead of trusting the code.
+    """
+    return [
+        wav for wav in sorted(input_dir.rglob("*.wav")) if not wav.with_suffix(".npy").is_file()
+    ]
+
+
 def parse_args() -> argparse.Namespace:
     pre = argparse.ArgumentParser(add_help=False)
     pre.add_argument("-c", "--config", default=".env")
@@ -56,6 +68,9 @@ def main() -> None:
         print(f"[error] codec checkpoint not found: {args.codec}", file=sys.stderr)
         sys.exit(1)
 
+    # Upstream runs from its own package directory, so a relative path lands there.
+    args.input_dir = args.input_dir.resolve()
+    args.codec = args.codec.resolve()
     run_fish_command(
         "tools/vqgan/extract_vq.py",
         [
@@ -70,6 +85,14 @@ def main() -> None:
             str(args.codec),
         ],
     )
+    missing = clips_without_tokens(args.input_dir)
+    if missing:
+        print(
+            f"[error] {len(missing)} clips have no .npy after extraction "
+            f"(first: {missing[0]}); see the extractor log for the worker failure",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     print(f"[done] semantic tokens written next to wav files under {args.input_dir}")
 
 

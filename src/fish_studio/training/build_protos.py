@@ -47,6 +47,12 @@ def main() -> None:
         print("[error] output dir is required", file=sys.stderr)
         sys.exit(1)
 
+    if next(args.input_dir.rglob("*.npy"), None) is None:
+        print(f"[error] no .npy under {args.input_dir}; run vq first", file=sys.stderr)
+        sys.exit(1)
+    # Upstream runs from its own package directory, so a relative path lands there.
+    args.input_dir = args.input_dir.resolve()
+    args.output_dir = args.output_dir.resolve()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     run_fish_command(
         "tools/llama/build_dataset.py",

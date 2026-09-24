@@ -9,6 +9,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
+from fish_studio.paths import link_or_copy
+
 
 @dataclass
 class MergeStats:
@@ -116,7 +118,7 @@ def merge_datasets(
                 raise FileNotFoundError(f"{src}: missing audio file {rel_audio}")
             file_id = f"{seq:06d}"
             dst = wavs_dir / f"{file_id}.wav"
-            shutil.copy2(audio_path, dst)
+            link_or_copy(audio_path, dst)
             kept_speaker = (row_speaker or "").strip() or speaker_name
             merged.append((f"wavs/{file_id}.wav", text, kept_speaker))
             seq += 1

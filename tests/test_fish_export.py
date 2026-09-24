@@ -40,6 +40,44 @@ def test_export_labeled_dataset_writes_wav_and_lab(tmp_path: Path) -> None:
     assert (speaker_dir / "000001.lab").read_text(encoding="utf-8") == "Привіт, як справи?\n"
 
 
+def test_export_links_audio_instead_of_copying_it(tmp_path: Path) -> None:
+    """A 76 GB corpus copied next to itself buys nothing; nothing downstream rewrites a wav."""
+    dataset_dir = tmp_path / "combined"
+    wavs_dir = dataset_dir / "wavs"
+    wavs_dir.mkdir(parents=True)
+    _write_wav(wavs_dir / "000001.wav")
+    (dataset_dir / "metadata_train.csv").write_text(
+        "audio_file|text|speaker_name\nwavs/000001.wav|Привіт|speaker\n", encoding="utf-8"
+    )
+
+    export_labeled_dataset(dataset_dir, tmp_path / "fish-raw", speaker_name="speaker")
+
+    exported = tmp_path / "fish-raw" / "speaker" / "000001.wav"
+    assert exported.read_bytes() == (wavs_dir / "000001.wav").read_bytes()
+    assert exported.stat().st_nlink == 2 or exported.stat().st_ino != 0
+
+
+def test_export_with_a_worker_pool_matches_the_serial_export(tmp_path: Path) -> None:
+    dataset_dir = tmp_path / "combined"
+    wavs_dir = dataset_dir / "wavs"
+    wavs_dir.mkdir(parents=True)
+    lines = ["audio_file|text|speaker_name"]
+    for index in range(6):
+        _write_wav(wavs_dir / f"{index:06d}.wav")
+        lines.append(f"wavs/{index:06d}.wav|Речення номер {index}|spk{index % 2}")
+    (dataset_dir / "metadata_train.csv").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    stats = export_labeled_dataset(
+        dataset_dir, tmp_path / "fish-raw", speaker_name="speaker", workers=2, progress_every=0
+    )
+
+    assert stats.clips == 6
+    assert stats.speakers == {"spk0": 3, "spk1": 3}
+    assert (tmp_path / "fish-raw" / "spk1" / "000005.lab").read_text(encoding="utf-8") == (
+        "Речення номер 5\n"
+    )
+
+
 def test_export_labeled_dataset_can_include_eval_split(tmp_path: Path) -> None:
     dataset_dir = tmp_path / "combined"
     wavs_dir = dataset_dir / "wavs"
