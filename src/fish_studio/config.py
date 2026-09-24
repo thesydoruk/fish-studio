@@ -182,15 +182,33 @@ class StressConfig:
     lexicon_path: str = "configs/stress_lexicon.txt"
     # Keep Stanza on CPU so dataset prep / the API do not steal the TTS GPU.
     prefer_cpu: bool = True
-    # When a clip WAV is available, mark remaining OOV / skipped words from energy.
-    # Synthesis has no aligned audio, so this only affects dataset formation.
+    # When a clip WAV is available, mark remaining OOV / skipped words from the
+    # recording. Synthesis has no aligned audio, so this only affects dataset
+    # formation. See fish_studio.stress_align.fill_stress_from_audio.
     acoustic_fallback: bool = True
+    # How far the winning vowel must beat the runner-up before a mark is written.
+    # 1.0 fills everything at 72% accuracy; 2.0 fills about a third at 85.5%.
+    # A wrong mark teaches the wrong stress, so the default buys accuracy.
+    acoustic_margin: float = 2.0
+    # Alignment device for that fill. CPU costs ~335 ms per clip, which is 18
+    # hours over a 196k-clip corpus; dataset prep is the one time the GPU is
+    # free, so "cuda" is worth setting there. Synthesis never runs this path.
+    acoustic_device: str = "cpu"
 
 
-# One UA run: slow text→semantic stack. fast_* is timbre and stays opt-in.
-DEFAULT_LORA_TARGET_MODULES = ("attention", "mlp", "embeddings")
-# Full attention+mlp fold kills in-context clone; 0.5 is the measured serve point.
-DEFAULT_MERGE_SCALE = 0.5
+# One UA run: the w2 down-projection of each slow MLP plus the text table.
+# The wider attention,mlp,embeddings pass keeps no more of the Ukrainian gain
+# and costs far more clone: attention is the circuit that reads the prompt.
+# fast_* is timbre and stays opt-in.
+DEFAULT_LORA_TARGET_MODULES = ("mlp_w2", "embeddings")
+# What ``train merge`` folds in from the adapter; every other tensor stays stock.
+# The pronunciation of an mlp_w2,embeddings adapter sits in the w2 projections of
+# slow layers 0-11 and in the text table. The late w2 layers add no pronunciation
+# and cost clone on voices the model never heard.
+DEFAULT_MERGE_SCALE_FOR = (
+    r"^layers\.([0-9]|1[01])\.feed_forward\.w2\.=1.0",
+    r"^embeddings\.=1.0",
+)
 
 
 @dataclass
@@ -202,34 +220,37 @@ class TrainingConfig:
     project_name: str = "fish-uk"
     base_checkpoint: str = ""
     merged_checkpoint: str = ""
-    max_steps: int = 10000
-    batch_size: int = 2
-    grad_accum: int = 1
-    lr: float = 1e-4
-    val_check_interval: int = 100
+    max_steps: int = 1000
+    batch_size: int = 4
+    grad_accum: int = 4
+    lr: float = 5e-5
+    val_check_interval: int = 500
     # -1 keeps every checkpoint, so the best step can be picked after listening;
     # upstream keeps only the last few, which discards earlier candidates.
     save_top_k: int = -1
-    lora_config: str = "r_8_alpha_16"
-    lora_r: int = 8
-    lora_alpha: float = 16.0
+    lora_config: str = "r_32_alpha_64"
+    lora_r: int = 32
+    lora_alpha: float = 64.0
     lora_dropout: float = 0.01
     # Slow (text->semantic) targets drive pronunciation; fast targets shape acoustics.
     lora_target_modules: list[str] = field(
         default_factory=lambda: list(DEFAULT_LORA_TARGET_MODULES)
     )
-    # After merge: W = stock + scale × (ft − stock). 1.0 is a raw fold.
-    merge_scale: float = DEFAULT_MERGE_SCALE
+    # What the merge keeps: PATTERN=SCALE on the fish-native key, first match
+    # wins, W = stock + scale × (ft − stock). Tensors no group matches stay stock.
+    merge_scale_for: list[str] = field(default_factory=lambda: list(DEFAULT_MERGE_SCALE_FOR))
     # Cap per-speaker sampling weight so huge folders do not own every step.
     max_speaker_weight: int = 10000
     # When a speaker has both scripts, this fraction of pairs is EN-ref → UK-target.
     cross_lingual_prob: float = 0.7
     continue_path: str = ""
-    vq_batch_size: int = 16
-    vq_num_workers: int = 1
+    # Stress-marking processes for `train export`; each holds Stanza + the aligner.
+    export_num_workers: int = 8
+    # One VQ worker at batch 8 peaks at ~14 GB; 2 x 4 fits a 32 GB card beside nothing else.
+    vq_batch_size: int = 4
+    vq_num_workers: int = 2
     proto_num_workers: int = 8
     proto_shard_size_mb: int = 10
-    test_text: str = "Доброго дня! Вартість квитка 150 грн, знижка 10 відсотків."
 
 
 @dataclass
@@ -238,7 +259,7 @@ class FishSpeechConfig:
 
     Serving is always via an external vLLM process (``./run.sh vllm start``).
     ``model`` is relative to paths.data_root or a HuggingFace repo id.
-    ``llama_checkpoint`` / decoder fields are used by LoRA training and CLI infer.
+    ``llama_checkpoint`` is the stock checkpoint LoRA training starts from.
     """
 
     base_url: str = "http://127.0.0.1:8091"
@@ -247,15 +268,11 @@ class FishSpeechConfig:
     voice: str = "default"
     timeout_sec: float = 300.0
     llama_checkpoint: str = "checkpoints/fish-speech/s2-pro"
-    decoder_checkpoint: str | None = None
     decoder_config_name: str = "modded_dac_vq"
-    half: bool = True
-    compile: bool = False
     chunk_length: int = 200  # chars per vLLM request; 0 disables splitting
-    max_new_tokens: int = 0  # 0 = vLLM server default; training CLI uses runtime override
+    max_new_tokens: int = 0  # 0 = vLLM server default
     max_concurrent_requests: int = 6
     default_reference_text: str = ""
-    use_finetuned: bool = False
     # Persist recent synthesize dumps under {data_root}/logs/synthesis/.
     synth_log: bool = True
     synth_log_keep: int = 40
@@ -417,7 +434,7 @@ def _parse_env_value(raw: str, field_type: Any) -> Any:
     if inner_origin is list:
         if raw.strip().startswith("["):
             return json.loads(raw)
-        item_type = get_args(inner)[0] if get_args(inner) else st
+        item_type = get_args(inner)[0] if get_args(inner) else str
         return [
             _parse_env_value(part.strip(), item_type) for part in raw.split(",") if part.strip()
         ]
@@ -495,9 +512,6 @@ def load_config(path: str | Path | None = None) -> ProjectConfig:
     anchor = _load_dotenv(env_file)
 
     fish_speech = _dataclass_from_env(FishSpeechConfig, "FISH_SPEECH")
-    if os.environ.get("FISH_SPEECH_DECODER_CHECKPOINT", "").strip() == "":
-        # Empty env means "use codec.pth next to the LLAMA checkpoint", not "".
-        fish_speech = replace(fish_speech, decoder_checkpoint=None)
 
     stress = _dataclass_from_env(StressConfig, "STRESS")
     if stress.lexicon_path.strip():

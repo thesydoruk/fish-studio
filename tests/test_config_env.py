@@ -41,14 +41,30 @@ def test_missing_env_keeps_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert config.port == InferenceConfig().port
 
 
-def test_training_merge_scale_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("TRAINING_MERGE_SCALE", "0.4")
+def test_training_targets_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TRAINING_LORA_TARGET_MODULES", "attention,mlp,embeddings")
 
     config = _dataclass_from_env(TrainingConfig, "TRAINING")
 
-    assert config.merge_scale == 0.4
     assert config.lora_target_modules == ["attention", "mlp", "embeddings"]
+
+
+def test_training_merge_groups_default_to_early_w2_and_embeddings() -> None:
+    """The served recipe is the default: early w2 and the text table, nothing else."""
+    config = TrainingConfig()
+
+    assert config.merge_scale_for == [
+        r"^layers\.([0-9]|1[01])\.feed_forward\.w2\.=1.0",
+        r"^embeddings\.=1.0",
+    ]
+
+
+def test_training_merge_groups_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TRAINING_MERGE_SCALE_FOR", r"^embeddings\.=1.0,^layers\.=0.5")
+
+    config = _dataclass_from_env(TrainingConfig, "TRAINING")
+
+    assert config.merge_scale_for == [r"^embeddings\.=1.0", r"^layers\.=0.5"]
 
 
 def test_quality_audio_gates_from_env(monkeypatch: pytest.MonkeyPatch) -> None:

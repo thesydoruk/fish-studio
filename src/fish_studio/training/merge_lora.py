@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Merge Fish Speech LoRA weights into a standalone s2-pro LLAMA checkpoint.
 
-After the upstream fold, ``TRAINING_MERGE_SCALE`` (default 0.5) blends toward
-stock: ``W = stock + scale × (ft − stock)``. Pass ``--merge-scale 1`` for a
-raw fold.
+After the upstream fold, only part of it is kept: each tensor takes the dose
+of the first ``TRAINING_MERGE_SCALE_FOR`` group whose regex matches its
+fish-native name, as ``W = stock + scale × (ft − stock)``, and a tensor no
+group matches goes back to stock. The default keeps the w2 projections of slow
+layers 0-11 and the text table at full dose.
 """
 
 from __future__ import annotations
@@ -13,9 +15,9 @@ import shutil
 import sys
 from pathlib import Path
 
-from fish_studio.config import DEFAULT_MERGE_SCALE, TrainingConfig
+from fish_studio.config import TrainingConfig
 from fish_studio.project_context import try_load_project
-from fish_studio.training.interpolate import apply_merge_scale
+from fish_studio.training.interpolate import apply_merge_groups, parse_scale_group
 from fish_studio.training.layout import (
     latest_lora_checkpoint,
     project_run_dir,
@@ -74,7 +76,7 @@ def parse_args() -> argparse.Namespace:
         "lora_weight": "",
         "base_checkpoint": None,
         "output_dir": None,
-        "merge_scale": DEFAULT_MERGE_SCALE,
+        "merge_scale_for": list(TrainingConfig().merge_scale_for),
     }
     if project is not None:
         ws = project.workspace()
@@ -85,7 +87,7 @@ def parse_args() -> argparse.Namespace:
                 "lora_config": ft.lora_config,
                 "base_checkpoint": resolve_base_checkpoint(project, ws),
                 "output_dir": resolve_merged_checkpoint(project, ws),
-                "merge_scale": ft.merge_scale,
+                "merge_scale_for": list(ft.merge_scale_for),
             }
         )
         latest = latest_lora_checkpoint(project_run_dir(ws, ft.project_name) / "checkpoints")
@@ -99,13 +101,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-checkpoint", type=Path, default=defaults["base_checkpoint"])
     parser.add_argument("--output-dir", type=Path, default=defaults["output_dir"])
     parser.add_argument(
-        "--merge-scale",
-        type=float,
-        default=defaults["merge_scale"],
-        help="Blend toward stock after the fold: W = stock + scale × (ft − stock). "
-        "1.0 keeps the raw merge.",
+        "--merge-scale-for",
+        action="append",
+        default=None,
+        metavar="PATTERN=SCALE",
+        help="Dose for tensors whose fish-native key matches PATTERN (regex, first "
+        "match wins); tensors no group matches stay stock. Repeatable; given at all, "
+        "it replaces TRAINING_MERGE_SCALE_FOR.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.merge_scale_for is None:
+        args.merge_scale_for = defaults["merge_scale_for"]
+    return args
 
 
 def main() -> None:
@@ -135,10 +142,6 @@ def main() -> None:
         print(f"[error] base checkpoint not found: {base}", file=sys.stderr)
         sys.exit(1)
 
-    if not 0.0 <= args.merge_scale <= 1.0:
-        print(f"[error] --merge-scale must be in [0, 1], got {args.merge_scale}", file=sys.stderr)
-        sys.exit(1)
-
     output = (args.output_dir or resolve_merged_checkpoint(project, ws)).resolve()
     if output.exists():
         shutil.rmtree(output)
@@ -158,8 +161,13 @@ def main() -> None:
         ],
     )
     _copy_tokenizer_files(base, output)
-    apply_merge_scale(output, base, args.merge_scale)
-    print(f"[done] merged checkpoint: {output} (scale={args.merge_scale})")
+    try:
+        groups = [parse_scale_group(spec) for spec in args.merge_scale_for]
+    except ValueError as exc:
+        print(f"[error] --merge-scale-for: {exc}", file=sys.stderr)
+        sys.exit(1)
+    apply_merge_groups(output, base, groups)
+    print(f"[done] merged checkpoint: {output} (groups={args.merge_scale_for})")
 
 
 if __name__ == "__main__":

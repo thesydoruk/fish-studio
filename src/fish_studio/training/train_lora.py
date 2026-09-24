@@ -17,7 +17,6 @@ from fish_studio.training.layout import (
 )
 from fish_studio.training.upstream import run_fish_train
 
-
 # The upstream dataset packs a fish-speech 1.5 prompt that s2-pro never sees at
 # generation time; training on it drives the slow layers to silence.
 DATASET_TARGET = "fish_studio.training.reference_dataset.ReferenceConditionedIterableDataset"
@@ -28,7 +27,6 @@ LORA_TARGETS = {
     "mlp_w2",
     "embeddings",
     "codebook_embeddings",
-    "output",
     "fast_attention",
     "fast_mlp",
     "fast_embeddings",
@@ -122,11 +120,18 @@ def parse_args() -> argparse.Namespace:
             }
         )
 
+    runs_root = project.workspace().training_dir / "runs" if project is not None else None
+
     parser = argparse.ArgumentParser(description=__doc__, parents=[pre])
     parser.add_argument("--project-name", default=defaults["project_name"])
     parser.add_argument("--protos-dir", type=Path, default=defaults["protos_dir"])
     parser.add_argument("--base-checkpoint", type=Path, default=defaults["base_checkpoint"])
-    parser.add_argument("--run-dir", type=Path, default=defaults["run_dir"])
+    parser.add_argument(
+        "--run-dir",
+        type=Path,
+        default=None,
+        help="Run directory; defaults to {data_root}/training/runs/<project-name>",
+    )
     parser.add_argument("--max-steps", type=int, default=defaults["max_steps"])
     parser.add_argument("--batch-size", type=int, default=defaults["batch_size"])
     parser.add_argument("--grad-accum", type=int, default=defaults["grad_accum"])
@@ -165,7 +170,31 @@ def parse_args() -> argparse.Namespace:
         default=defaults["resume"],
         help='LoRA checkpoint path, or "auto" for latest step_*.ckpt',
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    args.run_dir = resolve_run_dir(args.project_name, args.run_dir, runs_root=runs_root)
+    return args
+
+
+def resolve_run_dir(
+    project_name: str,
+    run_dir: Path | None,
+    *,
+    runs_root: Path | None,
+) -> Path | None:
+    """Where a run writes. An explicit --run-dir wins; otherwise the project name decides.
+
+    The defaults are computed from ``.env`` before the command line is read, so
+    ``--project-name fish-uk-v17`` used to keep ``run_dir`` pointing at
+    ``runs/fish-uk-v16``. Lightning then found v16's ``step_001000.ckpt`` there,
+    restored it, saw ``max_steps=1000`` already reached and stopped without a
+    single new step -- while reporting success. A new name must mean a new
+    directory unless the caller says otherwise.
+    """
+    if run_dir is not None:
+        return run_dir
+    if runs_root is not None:
+        return runs_root / project_name
+    return None
 
 
 def resolve_resume_checkpoint(args: argparse.Namespace, checkpoint_dir: Path) -> str | None:
@@ -202,11 +231,11 @@ def main() -> None:
         print(f"[error] {exc}", file=sys.stderr)
         sys.exit(1)
     print(f"[info] LoRA r={args.lora_r} alpha={args.lora_alpha} targets=[{lora_targets}]")
-    if any(name in lora_targets.split(",") for name in ("attention", "mlp", "mlp_w2", "output")):
+    if any(name in lora_targets.split(",") for name in ("attention", "mlp", "mlp_w2")):
         print(
             "[info] LoRA position gate: slow delta after first <|im_end|> "
             "(system/ref+VQ stays stock during train; merge folds ΔW everywhere, "
-            "then blends at TRAINING_MERGE_SCALE)"
+            "then keeps only the TRAINING_MERGE_SCALE_FOR groups)"
         )
     print(
         "[info] dataset: reference-conditioned "

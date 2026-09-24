@@ -1,13 +1,17 @@
-"""Blend a merged Fish checkpoint toward stock: W = stock + scale * (ft − stock).
+"""Keep part of a merged Fish checkpoint: W = stock + scale * (ft − stock) per group.
 
-``./run.sh train merge`` applies ``TRAINING_MERGE_SCALE`` (default 0.5) after
-the upstream fold. A raw attention+mlp merge at 1.0 kills in-context clone.
+``./run.sh train merge`` applies ``TRAINING_MERGE_SCALE_FOR`` after the upstream
+fold. Each tensor takes the scale of the first group whose pattern matches its
+fish-native key; a tensor no group matches goes back to stock. The default keeps
+the ``w2`` down-projections of slow layers 0-11 and the text table.
 """
 
 from __future__ import annotations
 
 import json
 import re
+from collections import Counter
+from collections.abc import Sequence
 from pathlib import Path
 
 import torch
@@ -41,17 +45,39 @@ def load_stock_index(stock_dir: Path) -> dict[str, str]:
     if single.is_file():
         from safetensors.torch import load_file
 
-        return {k: str(single) for k in load_file(str(single)).keys()}
+        return {k: str(single) for k in load_file(str(single))}
     raise FileNotFoundError(f"no stock weights in {stock_dir}")
+
+
+ScaleGroup = tuple[re.Pattern[str], float]
+
+
+def parse_scale_group(spec: str) -> ScaleGroup:
+    """``PATTERN=SCALE`` from the command line; the pattern is a Python regex."""
+    pattern, sep, value = spec.rpartition("=")
+    if not sep or not pattern:
+        raise ValueError(f"expected PATTERN=SCALE, got {spec!r}")
+    scale = float(value)
+    if not 0.0 <= scale <= 1.0:
+        raise ValueError(f"scale must be in [0, 1], got {scale} in {spec!r}")
+    return re.compile(pattern), scale
+
+
+def scale_for(key: str, groups: Sequence[ScaleGroup]) -> float:
+    """First matching group wins; a key nothing matches stays stock."""
+    for pattern, scale in groups:
+        if pattern.search(key):
+            return scale
+    return 0.0
 
 
 def interpolate(
     stock_dir: Path,
     merged_path: Path,
-    scale: float,
+    groups: Sequence[ScaleGroup],
 ) -> dict[str, torch.Tensor]:
-    if not 0.0 <= scale <= 1.0:
-        raise ValueError(f"scale must be in [0, 1], got {scale}")
+    if not groups:
+        raise ValueError("no merge groups: the whole fold would go back to stock")
     key_to_shard = load_stock_index(stock_dir)
     state = torch.load(merged_path, map_location="cpu", mmap=True, weights_only=True)
 
@@ -68,6 +94,7 @@ def interpolate(
     unchanged = 0
     skipped = 0
     max_rel = 0.0
+    per_scale: Counter[float] = Counter()
     for key, ft in state.items():
         if not torch.is_floating_point(ft):
             out[key] = ft
@@ -95,16 +122,19 @@ def interpolate(
             out[key] = base
             unchanged += 1
             continue
-        mixed = (base.float() + scale * delta).to(dtype=ft.dtype)
+        key_scale = scale_for(key, groups)
+        per_scale[key_scale] += 1
+        mixed = (base.float() + key_scale * delta).to(dtype=ft.dtype)
         out[key] = mixed.contiguous()
         blended += 1
-        max_rel = max(max_rel, rel * scale)
+        max_rel = max(max_rel, rel * key_scale)
 
     for handle in shard_handles.values():
         handle.__exit__(None, None, None)
 
-    print(f"[interpolate] scale={scale}")
     print(f"[interpolate] blended={blended} unchanged={unchanged} skipped={skipped}")
+    summary = ", ".join(f"{count} tensors at {value}" for value, count in sorted(per_scale.items()))
+    print(f"[interpolate] by group: {summary}")
     print(f"[interpolate] max remaining rel L2 ≈ {max_rel * 100:.4f}%")
     return out
 
@@ -117,14 +147,15 @@ def write_interpolated(state: dict[str, torch.Tensor], output: Path) -> None:
     print(f"[interpolate] wrote {output}")
 
 
-def apply_merge_scale(merged_dir: Path, stock_dir: Path, scale: float) -> None:
-    """Blend ``merged_dir/model.pth`` toward stock. ``scale=1`` is a no-op."""
-    if scale == 1.0:
-        print("[merge] scale=1.0 — keeping the full LoRA fold")
-        return
+def apply_merge_groups(
+    merged_dir: Path,
+    stock_dir: Path,
+    groups: Sequence[ScaleGroup],
+) -> None:
+    """Rewrite ``merged_dir/model.pth`` keeping only the ``groups`` of the fold."""
     model_path = merged_dir / "model.pth" if merged_dir.is_dir() else merged_dir
     if not model_path.is_file():
         raise FileNotFoundError(f"merged checkpoint not found: {model_path}")
-    state = interpolate(stock_dir, model_path, scale)
+    state = interpolate(stock_dir, model_path, groups)
     write_interpolated(state, model_path)
-    print(f"[merge] applied scale={scale} toward {stock_dir}")
+    print(f"[merge] kept {len(groups)} group(s) of the fold; the rest is stock from {stock_dir}")

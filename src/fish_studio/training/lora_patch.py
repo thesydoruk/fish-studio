@@ -24,9 +24,7 @@ class LoraConfig:
     r: int
     lora_alpha: float
     lora_dropout: float = 0.0
-    target_modules: list[str] = field(
-        default_factory=lambda: ["attention", "mlp", "embeddings"]
-    )
+    target_modules: list[str] = field(default_factory=lambda: ["mlp_w2", "embeddings"])
 
 
 def _rescale_embedding_lora(new_embed) -> None:
@@ -238,7 +236,6 @@ def setup_lora(model, lora_config: LoraConfig) -> None:
     slow_mlp = _mlp_weight_names(targets)
     slow_embeddings = "embeddings" in targets
     slow_codebook = "codebook_embeddings" in targets
-    slow_output = "output" in targets
     fast_attention = "fast_attention" in targets
     fast_mlp = "fast_mlp" in targets
     fast_embeddings = "fast_embeddings" in targets
@@ -263,14 +260,6 @@ def setup_lora(model, lora_config: LoraConfig) -> None:
         model.codebook_embeddings = _replace_embedding(
             model.codebook_embeddings, lora_config
         )
-
-    if slow_output:
-        if hasattr(model, "output"):
-            linears.append((model, "output", True))
-        else:
-            # s2-pro has no separate slow logit head, so this target silently adapts
-            # nothing. Say so, or a run looks configured for something it never did.
-            print("[warn] LoRA target 'output' has no matching module; nothing to adapt there")
 
     for layer in model.layers:
         if slow_attention:

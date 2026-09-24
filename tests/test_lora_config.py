@@ -8,18 +8,17 @@ import pytest
 
 from fish_studio.config import (
     DEFAULT_LORA_TARGET_MODULES,
-    DEFAULT_MERGE_SCALE,
+    DEFAULT_MERGE_SCALE_FOR,
     TrainingConfig,
 )
 from fish_studio.training import merge_lora
 from fish_studio.training.train_lora import _lora_targets
 
 
-def test_training_defaults_are_one_slow_pass() -> None:
+def test_training_defaults_are_the_served_recipe() -> None:
     training = TrainingConfig()
     assert tuple(training.lora_target_modules) == DEFAULT_LORA_TARGET_MODULES
-    assert training.merge_scale == DEFAULT_MERGE_SCALE
-    assert training.merge_scale == 0.5
+    assert tuple(training.merge_scale_for) == DEFAULT_MERGE_SCALE_FOR
 
 
 def test_lora_targets_accepts_slow_and_fast_modules() -> None:
