@@ -54,7 +54,8 @@ def test_training_merge_groups_default_to_early_w2_and_embeddings() -> None:
     config = TrainingConfig()
 
     assert config.merge_scale_for == [
-        r"^layers\.([0-9]|1[01])\.feed_forward\.w2\.=1.0",
+        r"^layers\.([0-9]|1[01])\.(attention|feed_forward)\.=1.0",
+        r"^layers\.(1[2-9]|2[0-9]|3[0-5])\.attention\.=1.0",
         r"^embeddings\.=1.0",
     ]
 

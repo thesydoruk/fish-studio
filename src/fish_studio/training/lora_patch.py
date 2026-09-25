@@ -24,7 +24,7 @@ class LoraConfig:
     r: int
     lora_alpha: float
     lora_dropout: float = 0.0
-    target_modules: list[str] = field(default_factory=lambda: ["mlp_w2", "embeddings"])
+    target_modules: list[str] = field(default_factory=lambda: ["mlp", "embeddings", "attention"])
 
 
 def _rescale_embedding_lora(new_embed) -> None:

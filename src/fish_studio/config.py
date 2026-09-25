@@ -196,17 +196,18 @@ class StressConfig:
     acoustic_device: str = "cpu"
 
 
-# One UA run: the w2 down-projection of each slow MLP plus the text table.
-# The wider attention,mlp,embeddings pass keeps no more of the Ukrainian gain
-# and costs far more clone: attention is the circuit that reads the prompt.
-# fast_* is timbre and stays opt-in.
-DEFAULT_LORA_TARGET_MODULES = ("mlp_w2", "embeddings")
-# What ``train merge`` folds in from the adapter; every other tensor stays stock.
-# The pronunciation of an mlp_w2,embeddings adapter sits in the w2 projections of
-# slow layers 0-11 and in the text table. The late w2 layers add no pronunciation
-# and cost clone on voices the model never heard.
+# One UA run over the whole slow block: attention, the SwiGLU MLPs and the
+# text table. The adapter is trained wide and *merged* narrow (see
+# DEFAULT_MERGE_SCALE_FOR); fast_* is timbre and stays opt-in.
+DEFAULT_LORA_TARGET_MODULES = ("mlp", "embeddings", "attention")
+# What ``train merge`` keeps from the fold; every other tensor stays stock.
+# Measured on the probe set with held-out voices: the early layers (0-11) taken
+# whole carry stress placement; the late layers' attention hardens the «р»
+# without costing clone on voices the model never heard, while the late w2
+# projections cost that clone for every trill they add, so they stay stock.
 DEFAULT_MERGE_SCALE_FOR = (
-    r"^layers\.([0-9]|1[01])\.feed_forward\.w2\.=1.0",
+    r"^layers\.([0-9]|1[01])\.(attention|feed_forward)\.=1.0",
+    r"^layers\.(1[2-9]|2[0-9]|3[0-5])\.attention\.=1.0",
     r"^embeddings\.=1.0",
 )
 

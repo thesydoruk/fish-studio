@@ -335,11 +335,10 @@ Stock s2-pro weights under `checkpoints/fish-speech/` are never modified.
 | `mlp_w2`                                 | Only the `w2` projection of each slow MLP           |
 | `fast_*` counterparts                    | Acoustic decoder — timbre and delivery              |
 
-Default is `mlp_w2,embeddings`; the wider `attention,mlp,embeddings` pass
-trains more and costs more clone (attention is the circuit that reads the
-prompt). Semantic-id
-rows of the text table stay frozen; the position gate keeps the system/ref
-prefix stock during train. List `fast_*` explicitly to train the acoustic
+Default is `mlp,embeddings,attention`: the adapter is trained over the whole
+slow block and the merge below decides what is kept. Semantic-id rows of the
+text table stay frozen; the position gate keeps the system/ref prefix stock
+during train. List `fast_*` explicitly to train the acoustic
 decoder.
 
 s2-pro ties the logit head to the embedding table, so the `embeddings` target
@@ -356,11 +355,11 @@ matches its name; a tensor no group matches goes back to stock:
 W = stock + scale × (ft − stock)
 ```
 
-The default keeps the `w2` projections of slow layers 0–11 and the text table
-at full dose and leaves everything else stock. That is where the pronunciation
-of an `mlp_w2,embeddings` adapter lives; the late `w2` layers add none and cost
-clone on voices the model never heard. Pass `--merge-scale-for PATTERN=SCALE`
-(repeatable) to experiment, and measure the result with
+The default keeps slow layers 0–11 whole (stress placement lives there), the
+attention of layers 12–35 (it hardens the «р» at no cost to cloning) and the
+text table, and leaves the late `w2` projections stock: every trill they add
+costs clone on voices the model never heard. Pass `--merge-scale-for
+PATTERN=SCALE` (repeatable) to experiment, and measure the result with
 `./run.sh server uk-eval` before serving it.
 
 ### Ukrainian stress marks
