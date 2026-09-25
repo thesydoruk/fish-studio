@@ -278,10 +278,23 @@ held-out cloning cost, so a merge can only trade one for the other:
 
 An English clone prompt makes every point worse by roughly ten points, and
 the effect is stronger on some voices, which is why the soft «р» is heard
-"on some characters". Breaking the trade-off is a training matter, not a
-merge one: the late layers learned the trill and the sixteen training
-voices as one thing, and only a corpus with many more speakers can separate
-them.
+"on some characters".
+
+Speaker count is not what ties them together. v21 is the same recipe trained
+on `combined2`: the corpus plus `uk-pods` split into 296 voices by
+`cluster-speakers` (312 voices instead of 16, 219k clips). The late layers
+still carry the trill together with the held-out cost:
+
+| merge of v21 | stress | clone, held-out voices | rhotic | rhotic, English prompts |
+| --- | --- | --- | --- | --- |
+| early `w2` + text table | 76.8% | 0.488 | 18% | 22–26% |
+| late `w2` at 0.5 | 73.5% | 0.475 | 12% | 16–21% |
+| late `w2` at 1.0 | 71.2% | 0.438 | 17% | 11–12% |
+
+The extra voices bought a little stress placement and a couple of points of
+«р» at each dose, and nothing on the trade-off itself. What is left untried
+is the acoustic tower: no adapter so far has touched `fast_*`, and the trill
+is, in the end, an acoustic event.
 
 To experiment, pass groups on the command line (they replace the default set):
 
