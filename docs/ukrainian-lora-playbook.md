@@ -302,10 +302,12 @@ the same corpus, each measured the same way:
 | v22 | late `w2` at 0.5 + fast | 75.5% | 0.494 | 16% | 18–23% |
 | v23: lr 2e-5 | late `w2` at 1.0 | 73.0% | 0.468 | 14% | 15–16% |
 | v23 | early `w2` | 77.5% | 0.495 | 18% | — |
+| v24: 3000 steps | late `w2` at 1.0 | 72.1% | 0.425 | 18% | 11–15% |
 
 The acoustic tower does not carry the trill (early + fast: 20%) and does not
 lift the cost of the late layers (full + fast: 0.454); a gentler learning
-rate is just another point on the same line. Every adapter so far lands on
+rate is just another point on the same line, and three times the steps only
+deepen the cost (0.425) without hardening the «р». Every adapter so far lands on
 one curve: the harder the «р», the lower the clone on voices the model never
 heard, and only the position on the curve moves.
 
