@@ -55,12 +55,12 @@ def run_fish_merge(script_args: list[str]) -> None:
     ensure_fish_speech_root()
     env = os.environ.copy()
     env["FISH_MERGE_ARGS"] = json.dumps(["merge_lora.py", *script_args])
-    # Upstream deep-copies the whole state dict (11 GB on s2-pro) only to diff
-    # it against the saved file afterwards, then loads that file too: ~33 GB
-    # peak, and the kernel killed the merge after the model was already on
-    # disk. A shallow copy keeps the merge under 30 GB; the diff then reports
-    # "identical" and is ignored, because apply_merge_groups re-reads the file
-    # against stock right after and would fail on a broken one.
+    # Upstream keeps the model (11 GB on s2-pro), deep-copies its state dict,
+    # folds the adapter into a third copy for saving, then loads the saved
+    # file back to diff it: past 30 GB, and the kernel killed the merge after
+    # the model was already on disk. The copy becomes a shallow dict and the
+    # post-save reload ends the process instead -- apply_merge_groups re-reads
+    # that file against stock right after and would fail on a broken one.
     bootstrap = (
         "import json, os, sys; "
         "from fish_studio.training.lora_patch import apply_dual_ar_lora_patch; "
@@ -68,6 +68,10 @@ def run_fish_merge(script_args: list[str]) -> None:
         "sys.argv = json.loads(os.environ['FISH_MERGE_ARGS']); "
         "import tools.llama.merge_lora as upstream_merge; "
         "upstream_merge.deepcopy = dict; "
+        "_load = upstream_merge.torch.load; "
+        "upstream_merge.torch.load = (lambda path, *a, **k: "
+        "(_ for _ in ()).throw(SystemExit(0)) if str(path).endswith('model.pth') "
+        "else _load(path, *a, **k)); "
         "upstream_merge.merge()"
     )
     cmd = [sys.executable, "-c", bootstrap]
