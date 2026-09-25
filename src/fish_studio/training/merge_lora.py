@@ -90,9 +90,9 @@ def parse_args() -> argparse.Namespace:
                 "merge_scale_for": list(ft.merge_scale_for),
             }
         )
-        latest = latest_lora_checkpoint(project_run_dir(ws, ft.project_name) / "checkpoints")
-        if latest is not None:
-            defaults["lora_weight"] = str(latest)
+        # The LoRA checkpoint is resolved after parsing, from --project-name: a
+        # default computed here from .env made `--project-name fish-uk-v22` merge
+        # the .env project's checkpoint under the v22 label.
 
     parser = argparse.ArgumentParser(description=__doc__, parents=[pre])
     parser.add_argument("--project-name", default=defaults["project_name"])
