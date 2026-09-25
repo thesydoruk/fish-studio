@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fish-speech-server"
-version = "0.5.0"
+version = "0.6.0"
 description = "Fish Speech TTS server, dataset builder, and LoRA fine-tuning"
 readme = "README.md"
 requires-python = ">=3.10"
