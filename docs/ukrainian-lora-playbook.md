@@ -87,7 +87,7 @@ SPEAKER_CLUSTER_MIN_SPEECH_SEC=300
 
 TRAINING_DATASET_ID=combined
 TRAINING_PROJECT_NAME=fish-uk
-TRAINING_LORA_TARGET_MODULES=mlp_w2,embeddings
+TRAINING_LORA_TARGET_MODULES=mlp,embeddings,attention
 ```
 
 Notes:
@@ -181,7 +181,7 @@ pkill -f 'python -m audio_intel.server' || true
 # TRAINING_DATASET_ID=combined
 # TRAINING_PROJECT_NAME=fish-uk   # new name = new run directory
 # TRAINING_CONTINUE_PATH=                  # empty = train from base s2-pro
-# TRAINING_LORA_TARGET_MODULES=mlp_w2,embeddings
+# TRAINING_LORA_TARGET_MODULES=mlp,embeddings,attention
 
 ./run.sh bg-train all          # export → vq → protos → train → merge
 ./run.sh logs training
@@ -207,7 +207,7 @@ Steps inside `train all`:
 
 Keep `STRESS_*` identical between training and later serving.
 
-What is measured and what is not: the targets (`mlp_w2,embeddings`) and the
+What is measured and what is not: the targets (`mlp,embeddings,attention`) and the
 merge groups (section 6b) were chosen against numbers. The rank, alpha,
 learning rate, step count and batch in `.env.example` are the values of the
 one adapter those numbers were taken on; no sweep over them exists, so treat
@@ -251,16 +251,15 @@ matches its fish-native name; a tensor no group matches goes back to stock:
 W = stock + scale × (ft − stock)
 ```
 
-The default is the measured recipe for an `mlp_w2,embeddings` adapter: the
-`w2` projections of slow layers 0–11 and the text table at full dose, every
-other tensor stock. Pronunciation lives in those early layers; the late `w2`
-layers add no pronunciation and cost clone on voices the model never heard.
-Against a single 0.7 blend of the whole adapter this scores better on both
-axes at once: on the frozen probe set stress placement 75.5% against 72.2%
-(stock 59.0%, human recordings of the same lines 73.1%), and clone similarity
-on six voices the model never heard 0.514 against 0.497 (stock 0.513). Dose on
-the early layers does not matter: 0.7, 0.85 and 1.0 score the same, so the
-default is 1.0.
+The default is the measured recipe for the wide adapter: slow layers 0–11
+whole (attention and both MLP paths), the attention of layers 12–35, and the
+text table, all at full dose; every other tensor stock, above all the late
+`w2` projections. On the frozen probe set that is stress placement 74.8%
+(stock 59.0%, human recordings of the same lines 73.1%), clone similarity
+0.488 on six voices the model never heard (stock 0.513, the old 0.7 blend
+0.497), and 15% of «р» read as the English approximant (human 10%, the
+`w2`-only recipe 19%, stock 28%). The tables below are how the recipe was
+found.
 
 One thing the early layers do not carry: the hard р. On the `rhotic` axis
 (share of «р» whose F3 drops below 0.8 of the vowel's, the English
@@ -547,9 +546,8 @@ Three patches in `training/lora_patch.py` keep fine-tuning aligned with serve:
    saw. `patch_tied_embedding_logits` adds the same delta to the logits during
    training so the trained function matches the merged checkpoint.
 
-Default `TRAINING_LORA_TARGET_MODULES=mlp_w2,embeddings` adapts the `w2`
-down-projection of each slow MLP and the text table; `attention,mlp,embeddings`
-is the wider slow pass. `codebook_embeddings` and `fast_*` must be listed
+Default `TRAINING_LORA_TARGET_MODULES=mlp,embeddings,attention` adapts the
+whole slow block; the merge (section 6b) decides which modules are kept. `codebook_embeddings` and `fast_*` must be listed
 separately to adapt the acoustic codebook / decoder. The logit head is the
 embedding table itself, so `embeddings` covers it.
 
