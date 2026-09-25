@@ -310,9 +310,37 @@ lift the cost of the late layers (full + fast: 0.454); a gentler learning
 rate is just another point on the same line, three times the steps only
 deepen the cost (0.425) without hardening the «р», and sampling the 312
 voices uniformly instead of letting four folders own 43% of the steps
-changes nothing either (0.447). Every adapter so far lands on
-one curve: the harder the «р», the lower the clone on voices the model never
-heard, and only the position on the curve moves.
+changes nothing either (0.447). Every `mlp_w2` adapter lands on one curve:
+the harder the «р», the lower the clone on voices the model never heard,
+and only the position on the curve moves.
+
+What does move the curve is *which modules* of the late layers carry the
+change. v26 is the same corpus with LoRA on the whole slow block
+(`mlp,embeddings,attention`, gate on), and the merge then selects modules
+(early = layers 0–11, late = 12–35; the text table always at 1.0):
+
+| kept from the fold | stress | clone, held-out | rhotic | rhotic, English prompts |
+| --- | --- | --- | --- | --- |
+| early `w2` (control) | 64.9% | 0.508 | 20% | 35–38% |
+| early `w2` + late attention | 60.7% | 0.511 | 14% | 28–31% |
+| early `w2` + late `w1,w3` | 66.8% | 0.507 | 16% | 22–23% |
+| early `w2` + late `w2` + late attention | 65.6% | 0.491 | 17% | 24% |
+| early `w2` + whole late block | 63.3% | 0.459 | 10% | 15–17% |
+| early attention + `w1,w3` + `w2`, late attention | 74.8% | 0.488 | 15% | 15–23% |
+| all attention + early `w2` | 73.5% | 0.508 | 16% | 23% |
+| early `w1,w3` + `w2`, late attention | 72.8% | 0.487 | 21% | 20–24% |
+| everything but late `w2` | 72.8% | 0.462 | 11% | 14–15% |
+| everything, late `w2` at 0.5 | 75.8% | 0.433 | 17% | 18–19% |
+
+Three things this settles. The late `w2` is the single worst module for
+held-out clone. Late attention or late `w1,w3` alone harden the «р» at no
+cost, but together they cost again (0.462): the cost tracks the total size
+of the late-layer change, not one module. And with a wide adapter the
+stress moves out of `w2` into attention and `w1,w3`, so the early layers
+have to be taken whole. Two recipes beat the served one on the «р» heard
+through an English prompt without giving up clone: `all attention + early
+w2` (73.5%, 0.508, 23%) and `early block + late attention` (74.8%, 0.488,
+15–23%).
 
 To experiment, pass groups on the command line (they replace the default set):
 
