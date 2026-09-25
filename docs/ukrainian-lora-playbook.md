@@ -292,9 +292,22 @@ still carry the trill together with the held-out cost:
 | late `w2` at 1.0 | 71.2% | 0.438 | 17% | 11–12% |
 
 The extra voices bought a little stress placement and a couple of points of
-«р» at each dose, and nothing on the trade-off itself. What is left untried
-is the acoustic tower: no adapter so far has touched `fast_*`, and the trill
-is, in the end, an acoustic event.
+«р» at each dose, and nothing on the trade-off itself. Two more attempts on
+the same corpus, each measured the same way:
+
+| adapter | merge | stress | clone, held-out | rhotic | rhotic, English prompts |
+| --- | --- | --- | --- | --- | --- |
+| v22: + `fast_mlp` (acoustic tower) | early `w2` + fast | 76.8% | 0.491 | 20% | 22–25% |
+| v22 | late `w2` at 1.0 + fast | 69.7% | 0.454 | 14% | 10–12% |
+| v22 | late `w2` at 0.5 + fast | 75.5% | 0.494 | 16% | 18–23% |
+| v23: lr 2e-5 | late `w2` at 1.0 | 73.0% | 0.468 | 14% | 15–16% |
+| v23 | early `w2` | 77.5% | 0.495 | 18% | — |
+
+The acoustic tower does not carry the trill (early + fast: 20%) and does not
+lift the cost of the late layers (full + fast: 0.454); a gentler learning
+rate is just another point on the same line. Every adapter so far lands on
+one curve: the harder the «р», the lower the clone on voices the model never
+heard, and only the position on the curve moves.
 
 To experiment, pass groups on the command line (they replace the default set):
 
